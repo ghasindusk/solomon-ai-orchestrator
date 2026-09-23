@@ -1,0 +1,29 @@
+name: Routing quality report
+description: The Router chose a worse (or unexpected) agent for a task, or a routing signal looks wrong.
+title: "[Routing]: "
+labels: ["routing-quality"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `solomon route --role <role> --project-id <id>` and `solomon replay --task-id <id>` are the two most useful commands for building this report -- both print every scored candidate's component breakdown.
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect Solomon to choose, and why?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What did it actually choose?
+      description: Paste the output of `solomon route` or `solomon replay` (component scores + notes), not just the final agent name.
+    validations:
+      required: true
+  - type: textarea
+    id: history
+    attributes:
+      label: Relevant history
+      description: If this is about learned stats being wrong/stale, `solomon learning-report` output for the affected role is helpful.
+    validations:
+      required: false

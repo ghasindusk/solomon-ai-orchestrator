@@ -1,0 +1,47 @@
+version: "0.4"
+
+priority:
+  - system_safety
+  - global_rules
+  - project_rules
+  - goal_rules
+  - task_rules
+  - agent_preferences
+  - addon_preferences
+
+communication:
+  default: structured
+  free_agent_chat: false
+  debate:
+    default: false
+    max_agents: 3
+    max_rounds: 2
+    require_budget: true
+    require_timeout: true
+    require_termination_rule: true
+
+orchestration:
+  invisible_by_default: true
+  delegation_mode: auto
+  caller_may_equal_executor: true
+
+completion:
+  agent_claim_sufficient: false
+  require_definition_of_done: true
+
+safety:
+  checkpoint_before_code_change: true
+  bulk_delete_requires_approval: true
+  privileged_os_change_requires_approval: true
+  external_publish_requires_approval: true
+  addon_cannot_override_core_safety: true
+
+privacy:
+  telemetry_default: false
+  cross_project_context_default: false
+  secrets_to_agents: deny_unless_explicitly_required
+
+knowledge:
+  mandatory_policy_must_not_depend_on_rag: true
+  preserve_history: true
+  context_firewall: true

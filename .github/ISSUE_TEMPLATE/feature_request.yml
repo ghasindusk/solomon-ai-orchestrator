@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose a concrete, actionable improvement to Solomon.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For open-ended ideas without a specific proposal yet, please use Discussions instead -- this template is for a concrete, scoped request.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: How would this fit into Core vs. an adapter/addon (see CONTRIBUTING.md's contribution boundary)?
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety/policy impact
+      description: Does this touch approval gates, the autonomy dial, Token Budget enforcement, or project isolation? If so, describe how it preserves the existing safety floor.
+    validations:
+      required: false

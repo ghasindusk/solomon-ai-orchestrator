@@ -1,0 +1,33 @@
+name: Adapter / addon request
+description: Request or propose support for a new AI provider, tool, or addon capability.
+title: "[Adapter/Addon]: "
+labels: ["adapter-addon"]
+body:
+  - type: input
+    id: target
+    attributes:
+      label: What are you integrating?
+      description: e.g. a specific AI CLI/API, an MCP server, a knowledge provider, a new task type.
+    validations:
+      required: true
+  - type: textarea
+    id: interface
+    attributes:
+      label: How does it expose a non-interactive/programmatic interface?
+      description: Solomon needs a way to invoke it and get a structured result back without a human in the loop -- describe that surface (CLI flags, API, SDK, etc.).
+    validations:
+      required: true
+  - type: textarea
+    id: capabilities
+    attributes:
+      label: Capabilities / role fit
+      description: Which Solomon roles (Implementer, Reviewer, Tester, Knowledge Curator, ...) would this realistically serve well?
+    validations:
+      required: false
+  - type: textarea
+    id: permissions
+    attributes:
+      label: Permissions needed (if an addon)
+      description: e.g. shell.execute, filesystem.outside_project, secrets.use -- see addons/README.md and src/solomon/addon_manager.py for the permission model. Note that addon *execution* isn't implemented yet (manifests are validated only, not run) -- see the Known limitations section of README.md.
+    validations:
+      required: false

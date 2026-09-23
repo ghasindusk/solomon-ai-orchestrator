@@ -1,0 +1,43 @@
+name: Bug report
+description: Something in Solomon doesn't behave as documented/expected.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: please confirm this isn't a security issue (see SECURITY.md) and isn't one of the documented, intentional scope limits in README.md (Known limitations) / CHANGELOG.md.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, what actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The exact CLI command(s) or code path that trigger it.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Solomon version / commit
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, which adapters (claude_code/codex/antigravity/localai_ollama) are involved.
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Paste relevant CLI output. Please redact/omit prompts, file paths, or anything from `solomon diagnostics-export` you wouldn't want public -- attach a REDACTED (default-mode) diagnostics export if useful, never an --include-sensitive one.
+    validations:
+      required: false

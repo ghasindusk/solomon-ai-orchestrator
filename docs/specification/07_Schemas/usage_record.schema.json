@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Solomon UsageRecord v0.4 (Token & Compute Intelligence)",
+  "type": "object",
+  "required": [
+    "record_id",
+    "timestamp",
+    "project_id",
+    "agent_id",
+    "provider",
+    "tokens",
+    "provenance"
+  ],
+  "properties": {
+    "record_id": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "goal_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "task_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "agent_id": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string"
+    },
+    "model": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Specific model identifier, when the adapter reports one. Most current adapters (claude_code, codex, antigravity) do not surface this; leave null (UNKNOWN) rather than guessing."
+    },
+    "role": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tokens": {
+      "type": "object",
+      "description": "Token values as reported by the provider. A field that cannot be obtained is null (UNKNOWN), never 0.",
+      "properties": {
+        "input": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "output": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cached_input": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "context": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "total": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "savings": {
+      "type": "object",
+      "description": "Context Firewall / RAG / summarization / de-duplication reductions.",
+      "properties": {
+        "raw_context_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sent_context_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "context_saved_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reduction_ratio": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "compute": {
+      "type": "object",
+      "properties": {
+        "duration_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "queue_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "tokens_per_second": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "local_compute": {
+      "type": "object",
+      "description": "Local inference resources, where obtainable. Cloud agents leave these UNKNOWN.",
+      "properties": {
+        "gpu_time_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "vram_peak_mb": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ram_peak_mb": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "description": "Jev-style Decision Intelligence usage, tracked separately from generation.",
+      "properties": {
+        "decision_count": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "average_input_tokens_per_decision": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "decision_profile_result": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "retry_count": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "review_result": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "test_result": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "provenance": {
+      "type": "string",
+      "description": "Reliability of the numeric values in this record, in descending trust order.",
+      "enum": [
+        "API_REPORTED",
+        "CLI_REPORTED",
+        "CALCULATED",
+        "ESTIMATED",
+        "UNKNOWN"
+      ]
+    }
+  }
+}

@@ -1,0 +1,13 @@
+project_id: example-project
+name: Example Project
+autonomy: 3
+knowledge_scope:
+  project_only: true
+logging:
+  project_view: true
+  agent_view: true
+documentation:
+  progress_and_todo: true
+routing:
+  mode: hybrid
+  jev_enabled: false

@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Solomon Task",
+  "type": "object",
+  "required": [
+    "task_id",
+    "goal_id",
+    "project_id",
+    "type",
+    "role",
+    "risk",
+    "status",
+    "definition_of_done"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "goal_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string"
+    },
+    "role": {
+      "type": "string"
+    },
+    "risk": {
+      "enum": [
+        "LOW",
+        "NORMAL",
+        "HIGH",
+        "VERY_HIGH",
+        "CRITICAL"
+      ]
+    },
+    "status": {
+      "type": "string"
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "context_budget_tokens": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "assigned_agent": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "communication_mode": {
+      "enum": [
+        "DIRECT",
+        "REVIEW",
+        "DEBATE"
+      ]
+    },
+    "definition_of_done": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "autonomy": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 5
+    }
+  }
+}

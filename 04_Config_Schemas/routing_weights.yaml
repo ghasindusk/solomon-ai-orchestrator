@@ -1,0 +1,63 @@
+version: 0.3
+# Configurable weights for the conceptual routing score in
+# 02_Architecture_Design/SAO_Architecture_Design_v0.3.md section "Router":
+#   0.30 SkillMatch + 0.20 HistoricalQuality + 0.10 ProjectExperience
+# + 0.10 ContextFitness + 0.10 Availability + 0.05 PrivacyFitness
+# + 0.05 Speed + 0.10 UsageEfficiency  (the doc's original example, sums to 1.0)
+#
+# Phase 7 (Learning Router) adds role_fitness: an adapter's recorded
+# success rate specifically for the Task's role/task-type, sampled across
+# ALL projects (broader signal than historical_quality, which is
+# project-scoped) -- this is what actually calibrates routing toward
+# "codex is good at coder tasks but weak at documentation tasks" over
+# time, sourced from real recorded history, never fabricated. Took its
+# weight from historical_quality (0.20 -> 0.15) to keep the total at 1.0
+# rather than silently exceeding it; adjust here, not in code, if that
+# split should shift.
+# This file, not the code, is the source of truth for the weights --
+# src/solomon/router.py loads it at runtime.
+weights:
+  skill_match: 0.30
+  historical_quality: 0.15
+  role_fitness: 0.05
+  project_experience: 0.10
+  context_fitness: 0.10
+  availability: 0.10
+  privacy_fitness: 0.05
+  speed: 0.05
+  usage_efficiency: 0.10
+
+# Static, manually-assessed per-adapter properties the router can't derive
+# from recorded task history (privacy is a property of the provider, not
+# something to measure at runtime). context_window_tokens is a best-known
+# approximation, not a guarantee; reference_duration_seconds is only a
+# normalization anchor for the "speed" component.
+adapters:
+  claude_code:
+    privacy_fitness: 0.5 # cloud API (Anthropic)
+    context_window_tokens: 1000000
+    reference_duration_seconds: 30
+  codex:
+    privacy_fitness: 0.5 # cloud API (OpenAI), approximate context window
+    context_window_tokens: 400000
+    reference_duration_seconds: 30
+  localai_ollama:
+    privacy_fitness: 1.0 # fully local, nothing leaves the machine
+    context_window_tokens: 32768
+    reference_duration_seconds: 10
+  antigravity:
+    privacy_fitness: 0.5 # cloud API via agy, model/context window varies by selection
+    context_window_tokens: 1000000
+    reference_duration_seconds: 30
+
+default_context_window_tokens: 32768
+
+# Added 2026-09-09: GPU-aware routing. When live GPU telemetry
+# (src/solomon/telemetry.py, nvidia-smi) is supplied to Router.route(),
+# a local/GPU-bound adapter's usage_efficiency is penalized once GPU load
+# is at/above this threshold -- e.g. don't dispatch heavy local Ollama
+# tasks while the user is actively playing Minecraft on the same GPU.
+# Never penalizes cloud adapters; only applies when telemetry is actually
+# supplied (no telemetry is not treated as "busy").
+gpu_awareness:
+  busy_threshold_percent: 70

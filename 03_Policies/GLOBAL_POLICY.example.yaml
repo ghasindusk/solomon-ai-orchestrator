@@ -1,0 +1,47 @@
+version: 0.3
+priority:
+  - system_safety
+  - global_rules
+  - project_rules
+  - task_rules
+  - agent_preferences
+
+communication:
+  default_mode: structured
+  direct_ai_conversation: false
+  debate:
+    enabled: true
+    default: false
+    max_agents: 3
+    max_rounds: 2
+    require_budget: true
+    require_termination_rule: true
+
+records:
+  task_log_required: true
+  timestamp_required: true
+  diff_required_for_changes: true
+  todo_update_required_when_affected: true
+  progress_update_required_when_affected: true
+  decision_record_required_when_spec_changes: true
+
+completion:
+  agent_claim_is_sufficient: false
+  require_applicable_definition_of_done: true
+
+safety:
+  checkpoint_before_code_change: true
+  destructive_bulk_change_requires_approval: true
+  privileged_os_change_requires_approval: true
+  external_publish_requires_approval: true
+
+knowledge:
+  safety_rules_must_not_depend_on_rag: true
+  isolate_projects: true  # project-to-project data stays isolated; global_knowledge_paths below is a deliberate, separate exception for shared operational rules, not project data
+  preserve_historical_records: true
+  # Example/template path (v0.4 GitHub Publication Plan: no personal
+  # paths in the published repo). Copy this file to GLOBAL_POLICY.yaml
+  # (gitignored) and point this at your own shared-rules directory;
+  # policy.py's default path resolves to the non-example file.
+  global_knowledge_paths:
+    - "/path/to/your/shared/ai_rules"

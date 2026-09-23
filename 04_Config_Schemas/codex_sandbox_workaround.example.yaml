@@ -1,0 +1,32 @@
+# Codex CLI sandbox workaround for cloud-sync virtual drives.
+#
+# Codex's Windows sandbox setup fails immediately under paths on a
+# cloud-sync virtual drive (confirmed root cause: Google Drive for
+# Desktop's virtual drive doesn't support the SetNamedSecurityInfoW ACL
+# API Codex's sandbox helper needs). A local-clone mirror was chosen
+# instead of --dangerously-bypass-approvals-and-sandbox.
+#
+# For any codex task whose working directory resolves under one of the
+# paths below, codex_adapter.py runs against a local git clone on a real
+# NTFS volume instead (src/solomon/sandbox_clone.py), then fast-forwards
+# the original repo from the clone's new commit(s) after the run.
+#
+# Add a path here only once it's confirmed to fail the same way (check
+# ~/.codex/.sandbox/sandbox.<date>.log for SetNamedSecurityInfoW errors,
+# per the discovery report).
+#
+# This is the example/template version (v0.4 GitHub Publication Plan: no
+# personal paths in the published repo). Copy this to
+# codex_sandbox_workaround.yaml (gitignored) if you hit the same issue;
+# sandbox_clone.py's default path resolves to the non-example file. Most
+# setups (repo not under a cloud-sync virtual drive) won't need this at
+# all -- an empty/missing config is a no-op, not an error.
+incompatible_roots:
+  - "/path/to/your/cloud-sync/virtual/drive/root"
+
+# project_id -> local clone path. A project not listed here falls back to
+# "<local_clone_root>\<project_id>" (created on first use).
+local_clone_paths:
+  example_project: "/path/to/a/real/ntfs/volume/clone/example_project"
+
+local_clone_root: "/path/to/a/real/ntfs/volume/clone/.solomon_codex_clones"

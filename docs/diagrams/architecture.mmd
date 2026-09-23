@@ -1,0 +1,20 @@
+flowchart TD
+    U[User Goal] --> D[Solomon Director]
+    D --> P[Project Manager / Planner]
+    P --> K[Knowledge & Context Manager]
+    K --> O[LocalAI / Ollama + Obsidian]
+    P --> R[Dynamic Task Router]
+    R --> C[Claude Code]
+    R --> X[Codex]
+    R --> A[Antigravity]
+    R --> L[LocalAI / Ollama]
+    C --> E[Structured Task Result]
+    X --> E
+    A --> E
+    L --> E
+    E --> V[Verification / Review / Test]
+    V -->|Pass| S[State + Logs + Git + Docs]
+    V -->|Remediation| P
+    S --> G{Goal Complete?}
+    G -->|No| P
+    G -->|Yes| F[Complete]

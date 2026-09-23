@@ -1,0 +1,31 @@
+version: 0.3
+agents:
+  localai_ollama:
+    type: local
+    primary_capabilities: [knowledge, rag, summarization, classification, context_compression]
+    obsidian_knowledge_layer: true
+  claude_code:
+    type: cli
+    primary_capabilities: [architecture, analysis, review, documentation, coding]
+  codex:
+    type: cli
+    primary_capabilities: [coding, debugging, refactoring, testing, review]
+  antigravity:
+    type: cli
+    # Driven via the `agy` CLI's non-interactive print mode (agy -p ... --output-format json),
+    # NOT the antigravity-ide GUI binary, which only launches an async chat window with no way
+    # to capture a result (found during Phase 0 environment discovery).
+    primary_capabilities: [agentic_tasks, environment_operations, multi_step_work, coding]
+routing:
+  roles_are_provider_independent: true
+  consider:
+    - skill_match
+    - project_experience
+    - historical_success
+    - context_fitness
+    - availability
+    - privacy_fitness
+    - speed
+    - token_usage_pressure
+    - cost
+    - failure_risk

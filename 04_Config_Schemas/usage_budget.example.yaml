@@ -1,0 +1,22 @@
+version: 0.3
+usage_provenance: [API_REPORTED, CLI_REPORTED, CALCULATED, ESTIMATED, UNKNOWN]
+budgets:
+  global:
+    # limit_usd is the missing piece the original v0.3 draft didn't define --
+    # warning/critical/hard_stop are percentages of this. A conservative
+    # placeholder the user should tune, not a measured/researched figure.
+    limit_usd: 5.0
+    # window: all_time | daily | monthly. daily/monthly reset at the UTC
+    # calendar boundary, computed fresh on every check (no scheduled job
+    # resets anything -- "today" is evaluated at read time).
+    window: all_time
+    warning_percent: 70
+    critical_percent: 90
+    hard_stop_percent: 100
+  projects: {} # optional per-project override: { <project_id>: { limit_usd: N, window: daily } }
+actions:
+  warning: [log, dashboard_warning]
+  critical: [prefer_lower_pressure_agent, compress_context, require_reason_for_expensive_route]
+  hard_stop: [pause_or_request_approval]
+local_telemetry:
+  track_when_available: [prompt_tokens, generated_tokens, context_size, inference_duration, tokens_per_second, ram, vram, gpu_load]

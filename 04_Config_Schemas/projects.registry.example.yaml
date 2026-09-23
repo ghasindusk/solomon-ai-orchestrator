@@ -1,0 +1,41 @@
+version: 0.3
+# Project Registry (Architecture doc section 2 "Project Manager" / FR-02).
+# repo_path = code working directory (where an adapter would cd/execute).
+# knowledge_path = Obsidian notes root for that project (L0 knowledge layer).
+# Either may be null when that side doesn't exist yet. status: active |
+# superseded (kept per knowledge.preserve_historical_records, not deleted).
+#
+# This is the example/template registry (v0.4 GitHub Publication Plan:
+# "config.example.yaml", no personal paths in the published repo). Copy
+# this to projects.registry.yaml (gitignored) and fill in your own real
+# projects; registry.py's default path resolves to the non-example file.
+projects:
+  example_project:
+    name: "Example Project"
+    repo_path: "/path/to/your/project"
+    knowledge_path: "/path/to/your/obsidian/vault/example_project"
+    vcs: git
+    status: active
+    tags: [example]
+
+  example_game_project:
+    name: "Example Game Project (crash logs + mods example)"
+    repo_path: null
+    knowledge_path: "/path/to/your/obsidian/vault/example_game"
+    vcs: none
+    status: active
+    tags: [example, game_dev]
+    # Optional fields demonstrated here -- see src/solomon/crash_logs.py
+    # and src/solomon/mod_inventory.py.
+    crash_logs_path: "/path/to/your/game/instance/crash-reports"
+    mods_path: "/path/to/your/game/instance/mods"
+
+  example_app_project:
+    name: "Example App Project (build_command + app_log_path example)"
+    repo_path: "/path/to/your/app"
+    knowledge_path: null
+    vcs: git
+    status: active
+    tags: [example]
+    build_command: "your-build-or-lint-command"
+    app_log_path: "/path/to/your/app/run.log"

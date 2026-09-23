@@ -1,0 +1,17 @@
+id: community.example-addon
+name: Example Solomon Addon
+version: 0.1.0
+addon_api: "1"
+solomon_compatibility: ">=0.4,<0.5"
+entrypoint: "src/main.py"
+
+permissions:
+  - project.read
+
+provides:
+  roles:
+    - example_reviewer
+  task_types:
+    - example_validation
+  validators:
+    - example_validator
