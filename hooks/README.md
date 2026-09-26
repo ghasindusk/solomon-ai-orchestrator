@@ -1,24 +1,25 @@
-# Solomon v0.4 Gateway hooks (Phase 2)
+# Octavryn gateway hooks (formerly Solomon; v0.4 Phase 2)
 
-Registering this hook is opt-in, not automatic on install, because
-Claude Code hooks fire on every Claude Code session on the machine,
-not just Solomon-related work, so wiring one in is a deliberate choice
+Registering this hook is opt-in, not automatic on install. See
+`DECISIONS.md` D17/D19/D25 and `10_v0.4_Migration/MIGRATION_STATUS.md` for
+why: Claude Code hooks fire on every Claude Code session on the machine,
+not just Octavryn-related work, so wiring one in is a deliberate choice
 the user makes explicitly per machine (see "To activate" below) -- it is
 not bundled with writing the code.
 
 ## `solomon_user_prompt_submit.py`
 
-Implements the "advisory-only" delegation mode identified during Phase 0
-environment discovery: a
+Implements the "advisory-only" delegation mode identified in the Phase 0
+addendum (`08_Discovery/PHASE0_V0.4_ADDENDUM.md`, finding 3): a
 `UserPromptSubmit` hook cannot block or reroute a prompt, only add
 `additionalContext`. This script:
 
 1. Reads the hook's JSON stdin (`user_prompt`, `cwd`, `session_id`).
-2. Shells out to `solomon gateway-evaluate` (8s timeout, well under the
+2. Shells out to `octavryn gateway-evaluate` (`python -m octavryn`) (8s timeout, well under the
    hook's 30s budget) to get a delegation decision from
    `src/solomon/gateway.py`'s keyword heuristic.
 3. If it would delegate, prints `hookSpecificOutput.additionalContext`
-   suggesting the `solomon route-and-run` command CLAUDE.md's own routing
+   suggesting the `octavryn route-and-run` command CLAUDE.md's own routing
    rule already asks for manually -- this just automates noticing it.
 4. On any error, unmatched project, or non-delegate decision: silent
    no-op, exit 0. Never blocks, never raises to the caller.

@@ -1,0 +1,37 @@
+# Octavryn per-project least-privilege policies (D67). Copy to
+# project_policies.yaml. A project without an entry is unrestricted.
+# The file lives in Octavryn's config, never in the project's repository,
+# so an agent working in the project cannot widen its own policy.
+# An invalid file denies every task (fail closed).
+schema_version: "0.5"
+projects:
+  example_research_project:
+    # Only these skills may run, and a task must name one (--skill).
+    allowed_skills: [example.status, example.analyze]
+    # A skill requiring any of these capabilities is refused (aliases are
+    # normalized through capabilities.yaml).
+    denied_capabilities: [broker_execution, credential_management, fund_transfer, live_trading]
+    # A skill requesting any of these permissions is refused.
+    denied_permissions: [network.external]
+    # Permissions granted to non-core skills (never a denied one).
+    skill_grants:
+      example.analyze: [fs.write.runs]
+    # Case-insensitive regexes; a matching prompt is refused outright.
+    forbidden_prompt_patterns:
+      - '\bapi[\s_-]*key\b'
+    # Upper bound for the autonomy dial (0-2 add approval steps).
+    max_autonomy: 2
+    # Only these execution intelligences may run for this project.
+    allowed_adapters: [claude_code, codex]
+    # Restrictions applied when the adapter is constructed for the project.
+    execution_profile:
+      claude_code:
+        permission_mode: default
+        # Do not list Read/Grep/Glob: default mode already allows them inside
+        # the project directory; listing them allows reads anywhere (D72).
+        allowed_tools: [WebSearch]
+        disallowed_tools: [Edit, Write, WebFetch]
+      codex:
+        sandbox: read-only          # or workspace-write
+      antigravity:
+        mode: plan                  # sandbox is always on for agy

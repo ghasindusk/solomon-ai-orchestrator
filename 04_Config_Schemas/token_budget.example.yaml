@@ -1,8 +1,9 @@
 version: 0.4
 # Token & Compute Intelligence Token Budget (v0.4 additional spec section 10 /
 # Formal Specification v0.4 section 17.8). Parallel to usage_budget.example.yaml's
-# USD-based budget -- this one is Token-scoped and multi-axis. The Router
-# reads it as a token-pressure signal; a hard stop requires Human Approval.
+# USD-based budget -- this one is Token-scoped and multi-axis. Not yet wired
+# into the Router (that migration, replacing cost_usd-based routing pressure
+# with this, is Phase 6 reopen step 7; see DECISIONS.md D27).
 budgets:
   global:
     # limit_tokens is a conservative placeholder the user should tune, not a

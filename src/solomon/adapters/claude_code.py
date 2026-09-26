@@ -12,15 +12,50 @@ import subprocess
 
 from ..models import Task
 from ..result import TaskResult, Usage, UsageProvenance
-from .base import NO_BACKGROUND_SUFFIX, AdapterHealth, AgentAdapter
+from ..descriptors import Locality
+from .base import AdapterDeclaration, NO_BACKGROUND_SUFFIX, AdapterHealth, AgentAdapter
 
 
 class ClaudeCodeAdapter(AgentAdapter):
     name = "claude_code"
+    declaration = AdapterDeclaration(
+        name="claude_code",
+        display_name="Claude Code CLI",
+        adapter_type="cli",
+        provider="anthropic",
+        locality=Locality.CLOUD,
+        capabilities=['architecture', 'analysis', 'review', 'documentation', 'coding'],
+        credentials="provider_managed",
+        telemetry="tokens_and_cost",
+        mcp_tool_support=True,
+    )
 
     def __init__(self, binary: str = "claude", cwd: str | None = None):
         self.binary = binary
         self.cwd = cwd
+        self.allowed_tools: list[str] | None = None
+        self.disallowed_tools: list[str] = []
+        self.permission_mode: str | None = None
+
+    def apply_profile(self, profile: dict) -> None:
+        """Project execution profile (D67). The user's own Claude Code
+        settings may default to a permissive mode (e.g. `auto`); a profile
+        with permission_mode=default plus an allowedTools list makes the
+        non-interactive run deny every tool that is not listed."""
+        if profile.get("allowed_tools") is not None:
+            self.allowed_tools = list(profile["allowed_tools"])
+        self.disallowed_tools = list(profile.get("disallowed_tools") or [])
+        self.permission_mode = profile.get("permission_mode")
+
+    def build_command(self, prompt: str) -> list[str]:
+        cmd = [self.binary, "-p", prompt + NO_BACKGROUND_SUFFIX, "--output-format", "json"]
+        if self.permission_mode:
+            cmd += ["--permission-mode", self.permission_mode]
+        if self.allowed_tools is not None:
+            cmd += ["--allowedTools", ",".join(self.allowed_tools)]
+        if self.disallowed_tools:
+            cmd += ["--disallowedTools", ",".join(self.disallowed_tools)]
+        return cmd
 
     def health(self) -> AdapterHealth:
         path = shutil.which(self.binary)
@@ -37,13 +72,7 @@ class ClaudeCodeAdapter(AgentAdapter):
 
     def execute(self, task: Task, prompt: str, timeout_s: int = 600) -> TaskResult:
         started = self._now()
-        cmd = [
-            self.binary,
-            "-p",
-            prompt + NO_BACKGROUND_SUFFIX,
-            "--output-format",
-            "json",
-        ]
+        cmd = self.build_command(prompt)
         try:
             proc = subprocess.run(
                 cmd,

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:octavryn:v06:evidence-reference",
+  "title": "EvidenceReference (proposed)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "evidence_id", "project_id", "content_sha256", "content_ref", "observed_at", "source_created_at", "authenticity", "integrity", "assertion_verification", "attempt_id", "derived_from"],
+  "properties": {
+    "schema_version": {"const": "0.6"},
+    "evidence_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "project_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "content_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "content_ref": {"type": "string", "pattern": "^blob:[a-zA-Z0-9_-]{1,128}$"},
+    "observed_at": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "source_created_at": {"type": ["string", "null"], "format": "date-time", "pattern": "Z$"},
+    "authenticity": {"enum": ["UNKNOWN", "ATTRIBUTED", "AUTHENTICATED"]},
+    "integrity": {"enum": ["UNVERIFIED", "HASH_VERIFIED"]},
+    "assertion_verification": {"enum": ["UNKNOWN", "PASS", "FAIL"]},
+    "attempt_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+    "derived_from": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}}
+  }
+}

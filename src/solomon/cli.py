@@ -31,6 +31,7 @@ from .models import Risk, Task, task_status_from_result_status
 from .orchestration import build_review_task, needs_review
 from .parallel import BatchItem, run_batch
 from .worktree import WorktreeManager
+from .adapters.registry import known_adapter_names as _known_adapter_names
 from .policy import PolicyEngine
 from .registry import ProjectRegistry
 from .replay import compare_routers, replay_task
@@ -58,7 +59,7 @@ def cmd_discover(args: argparse.Namespace) -> int:
     try:
         import urllib.request
 
-        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as resp:
+        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as resp:  # nosec B310 - fixed localhost URL
             data = json.loads(resp.read().decode("utf-8"))
             findings["ollama_models"] = [m["name"] for m in data.get("models", [])]
     except Exception as exc:  # noqa: BLE001
@@ -184,63 +185,15 @@ def cmd_approvals_list(args: argparse.Namespace) -> int:
     for req in requests:
         print(f"{req['request_id']}\t{req['status']}\t{req['risk']}\t{req['project_id']}")
         print(f"\treason: {req['reason']}")
+        ctx = (req.get("task_params") or {}).get("approval_context")
+        if ctx:  # v0.5 spec 07 (absent on pre-v0.5 requests)
+            print(f"\tparticipant: {ctx['proposed_participant']}")
+            print(f"\taffected: {', '.join(ctx['affected_resources'])}")
+            print(f"\treversibility: {ctx['reversibility']}")
+            print(f"\talternatives: {'; '.join(ctx['alternatives'])}")
     if not requests:
         print("No matching approval requests.")
     return 0
-
-
-def cmd_approvals_decide(args: argparse.Namespace) -> int:
-    store = StateStore()
-    ok = store.decide_approval_request(args.request_id, approved=args.approve, note=args.note or "")
-    if not ok:
-        print(f"Request '{args.request_id}' not found or already decided.", file=sys.stderr)
-        return 1
-    print(f"Request '{args.request_id}' marked {'approved' if args.approve else 'denied'}.")
-    if args.approve:
-        print(f"Run: python -m solomon.cli execute-approved {args.request_id}")
-    return 0
-
-
-def cmd_execute_approved(args: argparse.Namespace) -> int:
-    store = StateStore()
-    req = store.get_approval_request(args.request_id)
-    if req is None:
-        print(f"No such approval request: {args.request_id}", file=sys.stderr)
-        return 1
-    if req["status"] != "approved":
-        print(f"Request '{args.request_id}' is '{req['status']}', not approved; refusing to execute.", file=sys.stderr)
-        return 1
-
-    params = req["task_params"]
-    task_kwargs = dict(
-        goal_id=params["goal_id"],
-        project_id=params["project_id"],
-        type=params["type"],
-        role=params["role"],
-        definition_of_done=params["definition_of_done"],
-        risk=Risk(params["risk"]),
-    )
-    if params.get("task_id"):
-        # Preserve the original task_id across the approval boundary so a
-        # `review_of:<task_id>` DoD criterion (added at request time by
-        # cmd_run_task) still resolves correctly once this executes.
-        # Older stored requests (pre this fix) won't have it -- falls
-        # back to a fresh id, same as before.
-        task_kwargs["task_id"] = params["task_id"]
-    task = Task(**task_kwargs)
-    store.save_task(task)
-    adapter = _load_adapter(params["adapter"])
-    health = adapter.health()
-    if not health.available:
-        print(f"Adapter '{params['adapter']}' unavailable: {health.detail}", file=sys.stderr)
-        return 1
-    result = adapter.execute(task, params["prompt"], timeout_s=params.get("timeout", 600))
-    store.save_result(result)
-    task.status = task_status_from_result_status(result.status)
-    task.status = advance_after_result(task, store, PolicyEngine())
-    store.save_task(task)
-    print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
-    return 0 if result.status != "FAILED" else 1
 
 
 def cmd_verify_task(args: argparse.Namespace) -> int:
@@ -282,7 +235,7 @@ def cmd_review_task(args: argparse.Namespace) -> int:
     original = Task.from_schema_dict(original_data)
 
     candidates = router.candidates_for_role("reviewer")
-    health_checks = {name: _load_adapter(name).health() for name in candidates}
+    health_checks = {name: _load_adapter(name, project_id=original.project_id).health() for name in candidates}
     review_task, score = build_review_task(
         original, router, implementer_agent=args.implementer_agent, health_checks=health_checks
     )
@@ -309,45 +262,30 @@ def cmd_review_task(args: argparse.Namespace) -> int:
         f"Output to review:\n{original_summary}\n\n"
         "Reply with OK if this looks correct, or NEEDS_FIX plus a one-line reason if not."
     )
-    adapter = _load_adapter(review_task.assigned_agent)
+    # v0.5 R6: the review prompt embeds another agent's output, so it gets
+    # the same gates (credential-looking content, risk words) as any task.
+    gated = _gate(review_task, review_prompt, store, PolicyEngine(), {
+        "kind": "adapter", "adapter": review_task.assigned_agent, "prompt": review_prompt,
+        "timeout": args.timeout,
+    })
+    store.save_task(review_task)
+    if gated is not None:
+        return gated
+    adapter = _load_adapter(review_task.assigned_agent, project_id=review_task.project_id)
     result = adapter.execute(review_task, review_prompt, timeout_s=args.timeout)
     store.save_result(result)
     review_task.status = task_status_from_result_status(result.status)
     review_task.status = advance_after_result(review_task, store, PolicyEngine())
     store.save_task(review_task)
+    from .evaluation import record as record_evaluation
+
+    record_evaluation(store, review_task, [result])
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     return 0 if result.status != "FAILED" else 1
 
 
-def cmd_route_and_run(args: argparse.Namespace) -> int:
-    store = StateStore()
-    router = Router(state=store, usage_manager=UsageManager(store), token_budget_manager=TokenBudgetManager())
-    task = Task(
-        goal_id=args.goal_id or "adhoc-goal",
-        project_id=args.project_id,
-        type="adhoc",
-        role=args.role,
-        definition_of_done=["result_recorded"],
-    )
-    store.save_task(task)
-    outcome = execute_with_fallback(
-        task, args.prompt, router, _load_adapter, state=store,
-        max_attempts=args.max_attempts, timeout_s=args.timeout,
-        gpu_telemetry=get_gpu_telemetry(),
-    )
-    for attempt in outcome.attempts:
-        if attempt.skipped:
-            print(f"[skip] {attempt.adapter_name}: unavailable ({attempt.health.detail})")
-        else:
-            print(f"[try]  {attempt.adapter_name}: {attempt.result.status}")
-    if outcome.final_result is None:
-        print("No adapter produced a result.", file=sys.stderr)
-        return 1
-    print(json.dumps(outcome.final_result.to_dict(), ensure_ascii=False, indent=2))
-    return 0 if outcome.final_result.status != "FAILED" else 1
-
-
-_DASHBOARD_ADAPTERS = ["claude_code", "codex", "localai_ollama", "antigravity"]
+# v0.5 R4: derived from the adapter registry, not a hardcoded provider list.
+_DASHBOARD_ADAPTERS = _known_adapter_names()
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
@@ -360,7 +298,9 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         health_checks = {name: _load_adapter(name).health() for name in _DASHBOARD_ADAPTERS}
         gpu = get_gpu_telemetry()
         data = build_dashboard(store, registry, health_checks, project_id=args.project_id, gpu_telemetry=gpu)
-        return render_dashboard(data)
+        from .v05_status import render_v05_sections
+
+        return render_dashboard(data) + render_v05_sections(store)
 
     if args.watch:
         try:
@@ -426,7 +366,7 @@ def cmd_run_batch(args: argparse.Namespace) -> int:
         worktrees_root = Path(project.repo_path) / ".solomon_worktrees"
 
     outcomes = run_batch(
-        items, router, _load_adapter, store, max_workers=args.max_workers,
+        items, router, _batch_adapter_factory, store, max_workers=args.max_workers,
         worktree_manager=worktree_manager, worktrees_root=worktrees_root,
         gpu_telemetry=get_gpu_telemetry(),
     )
@@ -516,31 +456,6 @@ def cmd_worktree_remove(args: argparse.Namespace) -> int:
     if args.force:
         manager.delete_branch(args.task_id, force=True)
     print(f"Removed worktree for {args.task_id}.")
-    return 0
-
-
-def cmd_debate(args: argparse.Namespace) -> int:
-    policy = PolicyEngine()
-    participants = {name: _load_adapter(name) for name in args.agents.split(",")}
-    judge_adapter = _load_adapter(args.judge)
-    task = Task(
-        goal_id=args.goal_id or "adhoc-goal",
-        project_id=args.project_id,
-        type="debate",
-        role=args.role,
-        definition_of_done=["debate_result"],
-    )
-    outcome = run_debate(
-        task, args.prompt, participants, args.judge, judge_adapter, policy, timeout_s=args.timeout
-    )
-    if outcome.aborted_reason:
-        print(f"Debate aborted: {outcome.aborted_reason}", file=sys.stderr)
-        return 1
-    for debate_round in outcome.rounds:
-        print(f"-- Round {debate_round.round_number} --")
-        for name, result in debate_round.responses.items():
-            print(f"  {name}: {result.summary[:200]}")
-    print(f"\nJudge ({outcome.judge_agent}) final answer:\n{outcome.final_result.summary}")
     return 0
 
 
@@ -763,7 +678,7 @@ def cmd_learning_report(args: argparse.Namespace) -> int:
 
 def cmd_route(args: argparse.Namespace) -> int:
     store = StateStore()
-    router = Router(state=store, usage_manager=UsageManager(store), token_budget_manager=TokenBudgetManager())
+    router = _project_router(store, args.project_id)
 
     task = Task(
         goal_id=args.goal_id or "adhoc-goal",
@@ -774,19 +689,33 @@ def cmd_route(args: argparse.Namespace) -> int:
         context_budget_tokens=args.context_budget,
     )
 
-    candidates = router.candidates_for_role(args.role)
+    skill = None
+    if getattr(args, "skill", None):
+        skill = router.skill_for_task(task, args.skill)
+        if skill is None:
+            print(f"Skill '{args.skill}' not found for project '{args.project_id}'.", file=sys.stderr)
+            return 1
+        print(f"skill {skill.id} ({skill.scope.value}) requires {', '.join(skill.required_capabilities)}")
+    skill_kw = {"skill": skill} if skill is not None else {}
+    candidates = router.candidates_for_role(args.role, **skill_kw)
+    for cand in router.last_resolution:
+        if not cand.eligible:
+            why = cand.excluded_reason or f"missing capability {', '.join(cand.missing)}"
+            print(f"excluded	{cand.intelligence_id}: {why}")
     if not candidates:
         print(f"No adapters map to role '{args.role}' (see ROLE_CAPABILITY_MAP / agents.example.yaml).")
         return 1
 
     health_checks = {}
     for name in candidates:
-        adapter = _load_adapter(name)
+        adapter = _load_adapter(name, project_id=args.project_id)
         health_checks[name] = adapter.health()
 
-    scores = router.route(task, health_checks=health_checks, gpu_telemetry=get_gpu_telemetry())
+    scores = router.route(task, health_checks=health_checks, gpu_telemetry=get_gpu_telemetry(), **skill_kw)
     for score in scores:
         print(f"{score.adapter_name}\ttotal={score.total:.3f}")
+        if not health_checks[score.adapter_name].available:
+            print(f"\tunavailable: {health_checks[score.adapter_name].detail}")
         for comp, val in score.components.items():
             print(f"\t{comp}: {val:.2f}")
         for note in score.notes:
@@ -860,6 +789,219 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 0 if report.all_ok else 1
 
 
+def _human_identity(explicit: str | None) -> str:
+    """Identity reference recorded with an approval decision. Taken from
+    --decided-by, else the OS login name. It is a record of who claims to
+    have decided, not authentication. Authenticated identity is the remote
+    bridge's job (see remote/bridge.py)."""
+    if explicit:
+        return explicit if explicit.startswith("human:") else f"human:{explicit}"
+    return "human:" + (os.environ.get("USERNAME") or os.environ.get("USER") or "unknown")
+
+
+def _gate(task: Task, prompt: str, store: StateStore, policy: PolicyEngine, action: dict,
+          skill=None, requested_skill_id: str | None = None) -> int | None:
+    """v0.5 R6: run the unified governance gates. Returns None when the
+    action may run now, 2 when an approval request was created, 3 when a
+    gate denied it outright."""
+    from .governance import evaluate, request_approval
+
+    decision = evaluate(task, prompt, store, policy, skill=skill, requested_skill_id=requested_skill_id)
+    if decision.denied:
+        print(f"Denied by governance: {decision.reason}", file=sys.stderr)
+        return 3
+    if decision.requires_approval:
+        request_id = request_approval(store, task, decision, action)
+        print(f"Task requires human approval (risk={task.risk.value}). Request created: {request_id}")
+        print(f"Reason:  {decision.reason}")
+        print(f"Decide:  octavryn approvals decide {request_id} --approve|--deny")
+        print(f"Then:    octavryn execute-approved {request_id}")
+        return 2
+    return None
+
+
+def cmd_approvals_decide(args: argparse.Namespace) -> int:
+    store = StateStore()
+    ok = store.decide_approval_request(
+        args.request_id, approved=args.approve, note=args.note or "",
+        decided_by=_human_identity(getattr(args, "decided_by", None)),
+    )
+    if not ok:
+        print(f"Request '{args.request_id}' not found or already decided.", file=sys.stderr)
+        return 1
+    print(f"Request '{args.request_id}' marked {'approved' if args.approve else 'denied'}.")
+    if args.approve:
+        print(f"Run: octavryn execute-approved {args.request_id}")
+    return 0
+
+
+def _project_policy_recheck(store: StateStore, request_id: str) -> str | None:
+    """D73: an approval records what a human accepted, not a permanent
+    exemption. The project policy is checked again at execution time, so
+    an approval created before a policy was tightened cannot run what the
+    current policy forbids. Runs BEFORE authorize_execution() consumes the
+    approval, so a refusal leaves the request intact (it can be denied or
+    left to expire). It can only refuse, never allow, so reading the
+    not-yet-hash-verified parameters here is safe."""
+    from .governance import DENY, _project_policy_gates
+
+    req = store.get_approval_request(request_id)
+    if req is None:
+        return None  # authorize_execution reports it
+    params = req["task_params"]
+    probe = Task(goal_id=params.get("goal_id", "g"), project_id=params.get("project_id"),
+                 type=params.get("type", "adhoc"), role=params.get("role", "coder"),
+                 definition_of_done=["result_recorded"])
+    skill = None
+    if params.get("skill_id"):
+        skill = _project_router(store, probe.project_id).skill_for_task(probe, params["skill_id"])
+    gates, _grants = _project_policy_gates(probe, str(params.get("prompt", "")), skill)
+    denied = [g.reason for g in gates if g.outcome == DENY]
+    if denied:
+        store.log_event(project_id=probe.project_id, event="approval_policy_recheck_denied",
+                        detail=f"{request_id}: {'; '.join(denied)}"[:500])
+        return f"current project policy denies this approved action: {'; '.join(denied)}"
+    return None
+
+
+def cmd_execute_approved(args: argparse.Namespace) -> int:
+    """Executes exactly the action a human approved, once (v0.5 R6:
+    governance.authorize_execution checks binding hash, expiry, single use)."""
+    from .governance import authorize_execution
+
+    store = StateStore()
+    blocked = _project_policy_recheck(store, args.request_id)
+    if blocked:
+        print(f"Refusing to execute: {blocked}", file=sys.stderr)
+        return 1
+    auth = authorize_execution(store, args.request_id)
+    if not auth.ok:
+        print(f"Refusing to execute: {auth.reason}", file=sys.stderr)
+        return 1
+    params = auth.action
+    task_kwargs = dict(
+        goal_id=params["goal_id"],
+        project_id=params["project_id"],
+        type=params["type"],
+        role=params["role"],
+        definition_of_done=params["definition_of_done"],
+        risk=Risk(params["risk"]),
+    )
+    if params.get("task_id"):
+        # Preserve the original task_id across the approval boundary so a
+        # `review_of:<task_id>` DoD criterion (added at request time by
+        # cmd_run_task) still resolves correctly once this executes.
+        task_kwargs["task_id"] = params["task_id"]
+    task = Task(**task_kwargs)
+    store.save_task(task)
+    policy = PolicyEngine()
+    kind = params.get("kind") or ("adapter" if params.get("adapter") else "route")
+
+    if kind == "route":
+        router = _project_router(store, task.project_id)
+        skill = router.skill_for_task(task, params.get("skill_id")) if params.get("skill_id") else None
+        if params.get("skill_id") and skill is None:
+            print(f"Refusing to execute: approved skill '{params['skill_id']}' no longer resolves", file=sys.stderr)
+            return 1
+        remote_id = params.get("remote_request_id")
+        if remote_id:
+            from .remote import worker as remote_worker
+
+            remote_worker.ensure_schema(store)
+            remote_worker.update_request(store, remote_id, "running", "executed via octavryn execute-approved")
+            if params.get("skill_locality") == "local" and skill is None:
+                from dataclasses import replace
+
+                base = router.skill_for_task(task)
+                skill = replace(base, locality_constraint="local") if base else None
+        outcome = execute_with_fallback(
+            task, params["prompt"], router, _project_adapter_factory(task.project_id), state=store, policy=policy,
+            max_attempts=params.get("max_attempts", 2), timeout_s=params.get("timeout", 600),
+            gpu_telemetry=get_gpu_telemetry(), authorized=True, skill=skill,
+        )
+        if remote_id:
+            # v0.5 D54: keep the remote request's durable status truthful.
+            from .remote.bridge import finish_request
+
+            finish_request(store, remote_id, task, outcome)
+        return _print_outcome(outcome)
+    if kind == "debate":
+        return _run_debate_now(task, params, policy)
+
+    adapter = _load_adapter(params["adapter"], project_id=task.project_id)
+    health = adapter.health()
+    if not health.available:
+        print(f"Adapter '{params['adapter']}' unavailable: {health.detail}", file=sys.stderr)
+        return 1
+    result = adapter.execute(task, params["prompt"], timeout_s=params.get("timeout", 600))
+    store.save_result(result)
+    task.status = task_status_from_result_status(result.status)
+    task.status = advance_after_result(task, store, policy)
+    store.save_task(task)
+    from .evaluation import record as record_evaluation
+
+    record_evaluation(store, task, [result])
+    print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    return 0 if result.status != "FAILED" else 1
+
+
+def _print_outcome(outcome) -> int:
+    if outcome.blocked is not None:
+        print(f"Blocked by governance: {outcome.blocked.reason}", file=sys.stderr)
+        return 2
+    for attempt in outcome.attempts:
+        if attempt.skipped:
+            print(f"[skip] {attempt.adapter_name}: unavailable ({attempt.health.detail})")
+        else:
+            print(f"[try]  {attempt.adapter_name}: {attempt.result.status}")
+    if outcome.final_result is None:
+        print("No adapter produced a result.", file=sys.stderr)
+        return 1
+    print(json.dumps(outcome.final_result.to_dict(), ensure_ascii=False, indent=2))
+    return 0 if outcome.final_result.status != "FAILED" else 1
+
+
+def cmd_route_and_run(args: argparse.Namespace) -> int:
+    """v0.5 R6: route-and-run passes the same governance gates as run-task
+    (the v0.4 gap, spec 09). Capability-first: --skill picks a skill
+    explicitly, otherwise the role's core skill is used."""
+    store = StateStore()
+    policy = PolicyEngine()
+    router = _project_router(store, args.project_id)
+    skill_id = getattr(args, "skill", None)
+    task = Task(
+        goal_id=args.goal_id or "adhoc-goal",
+        project_id=args.project_id,
+        type="adhoc",
+        role=args.role,
+        definition_of_done=["result_recorded"],
+        autonomy=getattr(args, "autonomy", None),
+        risk=classify_risk("adhoc", args.prompt),
+    )
+    skill = router.skill_for_task(task, skill_id) if skill_id else None
+    if skill is not None:
+        entry = ProjectRegistry().get(task.project_id) if skill.verification else None
+        task.definition_of_done = router.skill_registry.definition_of_done(
+            skill, prompt=args.prompt, artifact_pattern=entry.artifact_pattern if entry else None)
+    if needs_review(task):
+        task.definition_of_done.append(f"review_of:{task.task_id}")
+    store.save_task(task)
+    gated = _gate(task, args.prompt, store, policy, {
+        "kind": "route", "prompt": args.prompt, "timeout": args.timeout,
+        "max_attempts": args.max_attempts, "skill_id": skill_id,
+    }, skill=skill, requested_skill_id=skill_id)
+    if gated is not None:
+        store.save_task(task)
+        return gated
+    store.save_task(task)
+    outcome = execute_with_fallback(
+        task, args.prompt, router, _project_adapter_factory(task.project_id), state=store, policy=policy,
+        max_attempts=args.max_attempts, timeout_s=args.timeout,
+        gpu_telemetry=get_gpu_telemetry(), authorized=True, skill=skill,
+    )
+    return _print_outcome(outcome)
+
+
 def cmd_run_task(args: argparse.Namespace) -> int:
     store = StateStore()
     policy = PolicyEngine()
@@ -879,46 +1021,17 @@ def cmd_run_task(args: argparse.Namespace) -> int:
         task.definition_of_done.append(f"review_of:{task.task_id}")
     store.save_task(task)
 
-    approval_reason = None
-    if policy.requires_approval(task.risk, autonomy=task.autonomy):
-        approval_reason = f"classify_risk() flagged this prompt as {task.risk.value}: {args.prompt[:200]}"
-    else:
-        # v0.4 Token & Compute Intelligence (Formal Spec v0.4 section 17.8 /
-        # DECISIONS.md D27, D30): budget exhaustion must never be used to
-        # skip Safety/Verification -- route to Human Approval instead of
-        # silently letting the task through or silently blocking it.
-        budget_status = TokenBudgetManager().check(
-            store.get_usage_records(project_id=project_id), scope="project", scope_id=project_id
-        )
-        approval_reason = hard_stop_approval_reason(budget_status)
+    # v0.5 R6: the gates live in governance.evaluate(), shared by every
+    # execution path. Budget exhaustion still goes to Human Approval and
+    # never skips Safety/Verification (Formal Spec v0.4 17.8, D27/D30).
+    gated = _gate(task, args.prompt, store, policy, {
+        "kind": "adapter", "adapter": args.adapter, "prompt": args.prompt, "timeout": args.timeout,
+    })
+    store.save_task(task)
+    if gated is not None:
+        return gated
 
-    if approval_reason is not None:
-        request_id = f"appr-{uuid.uuid4().hex[:12]}"
-        store.create_approval_request(
-            request_id=request_id,
-            project_id=project_id,
-            risk=task.risk.value,
-            reason=approval_reason,
-            task_params={
-                "task_id": task.task_id,
-                "goal_id": task.goal_id,
-                "project_id": project_id,
-                "type": task.type,
-                "role": task.role,
-                "definition_of_done": task.definition_of_done,
-                "risk": task.risk.value,
-                "adapter": args.adapter,
-                "prompt": args.prompt,
-                "timeout": args.timeout,
-            },
-        )
-        print(f"Task requires human approval (risk={task.risk.value}). Request created: {request_id}")
-        print(f"Reason:  {approval_reason}")
-        print(f"Decide:  python -m solomon.cli approvals decide {request_id} --approve|--deny")
-        print(f"Then:    python -m solomon.cli execute-approved {request_id}")
-        return 2
-
-    adapter = _load_adapter(args.adapter)
+    adapter = _load_adapter(args.adapter, project_id=project_id)
     health = adapter.health()
     if not health.available:
         print(f"Adapter '{args.adapter}' unavailable: {health.detail}", file=sys.stderr)
@@ -929,34 +1042,255 @@ def cmd_run_task(args: argparse.Namespace) -> int:
     task.status = task_status_from_result_status(result.status)
     task.status = advance_after_result(task, store, policy)
     store.save_task(task)
+    from .evaluation import record as record_evaluation
+
+    record_evaluation(store, task, [result])
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     return 0 if result.status != "FAILED" else 1
 
 
-def _load_adapter(name: str, cwd: str | None = None):
-    """cwd is honored by the three CLI-based adapters (used for worktree
-    isolation, parallel.py); localai_ollama is HTTP-based and has no
-    filesystem cwd concept, so it's silently ignored there."""
-    if name == "claude_code":
-        from .adapters.claude_code import ClaudeCodeAdapter
-
-        return ClaudeCodeAdapter(cwd=cwd)
-    if name == "codex":
-        from .adapters.codex_adapter import CodexAdapter
-
-        return CodexAdapter(cwd=cwd)
-    if name == "localai_ollama":
-        from .adapters.ollama_adapter import OllamaAdapter
-
-        return OllamaAdapter()
-    if name == "antigravity":
-        from .adapters.antigravity_adapter import AntigravityAdapter
-
-        return AntigravityAdapter(cwd=cwd)
-    raise ValueError(f"Unknown adapter: {name}")
+def _run_debate_now(task: Task, params: dict, policy: PolicyEngine) -> int:
+    participants = {name: _load_adapter(name, project_id=task.project_id) for name in params["agents"]}
+    judge_adapter = _load_adapter(params["judge"], project_id=task.project_id)
+    outcome = run_debate(
+        task, params["prompt"], participants, params["judge"], judge_adapter, policy,
+        timeout_s=params.get("timeout", 600),
+    )
+    if outcome.aborted_reason:
+        print(f"Debate aborted: {outcome.aborted_reason}", file=sys.stderr)
+        return 1
+    for debate_round in outcome.rounds:
+        print(f"-- Round {debate_round.round_number} --")
+        for name, result in debate_round.responses.items():
+            print(f"  {name}: {result.summary[:200]}")
+    print()
+    print(f"Judge ({outcome.judge_agent}) final answer:")
+    print(outcome.final_result.summary)
+    return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def cmd_debate(args: argparse.Namespace) -> int:
+    """v0.5 R6: debate participants are agentic CLIs that can act on the
+    filesystem, so a debate passes the same gates as any other execution."""
+    store = StateStore()
+    policy = PolicyEngine()
+    task = Task(
+        goal_id=args.goal_id or "adhoc-goal",
+        project_id=args.project_id,
+        type="debate",
+        role=args.role,
+        definition_of_done=["debate_result"],
+    )
+    store.save_task(task)
+    params = {"kind": "debate", "prompt": args.prompt, "agents": args.agents.split(","),
+              "judge": args.judge, "timeout": args.timeout}
+    gated = _gate(task, args.prompt, store, policy, params)
+    if gated is not None:
+        return gated
+    return _run_debate_now(task, params, policy)
+
+
+# --- v0.5 registries / surfaces / governance (read-only unless noted) -------
+
+def cmd_intelligences(args: argparse.Namespace) -> int:
+    """Read-only discovery (R2). --refresh runs adapter health checks and
+    updates the registry; without it, the stored registry is shown and no
+    CLI is spawned."""
+    from .intelligence_registry import (
+        IntelligenceRegistry, discover_cli_tools, discover_codex_mcp_servers, discover_mcp_servers,
+    )
+
+    store = StateStore()
+    reg = IntelligenceRegistry(state=store)
+    descs = reg.discover() if args.refresh else reg.load_persisted()
+    if not descs:
+        print("Registry is empty. Run with --refresh to discover (read-only health checks).")
+    for d in descs:
+        caps = ", ".join(f"{c}={s.value}" for c, s in sorted(reg.graph.evidence_for(d.id).items()))
+        print(f"{d.id}	{d.availability.value}	{d.locality.value}	provider={d.provider}")
+        print(f"	capabilities: {caps}")
+        if d.models:
+            print(f"	models: {', '.join(d.models)}")
+    if args.tools:
+        for t in discover_cli_tools() + discover_mcp_servers() + discover_codex_mcp_servers():
+            print(f"tool	{t.id}	{t.kind}	{t.available.value}")
+    return 0
+
+
+def cmd_capability_confirm(args: argparse.Namespace) -> int:
+    """Records human-confirmed capability *evidence* (R2). Grants nothing."""
+    store = StateStore()
+    store.confirm_capability(args.intelligence_id, args.capability, _human_identity(args.confirmed_by))
+    print(f"Recorded: {args.intelligence_id} has '{args.capability}' (user_confirmed). "
+          "This is routing evidence only, not a permission.")
+    return 0
+
+
+def cmd_skills(args: argparse.Namespace) -> int:
+    from .skills import SkillRegistry
+
+    repo = None
+    if args.project_id:
+        entry = ProjectRegistry().get(args.project_id)
+        repo = entry.repo_path if entry else None
+    reg = SkillRegistry.default(project_repo_path=repo)
+    for skill in reg.all():
+        state = "enabled" if skill.enabled else "disabled"
+        print(f"{skill.id}	v{skill.version}	{skill.scope.value}	{skill.risk}	{state}	"
+              f"requires={','.join(skill.required_capabilities)}")
+    for c in reg.conflicts:
+        print(f"conflict	{c.kind}	{c.skill_id}	{c.detail}")
+    return 0
+
+
+def _skill_scope_dir(args: argparse.Namespace):
+    from .descriptors import SkillScope
+    from .skills import project_skills_dir, user_skills_dir
+
+    if args.scope == "user":
+        return SkillScope.USER, user_skills_dir()
+    entry = ProjectRegistry().get(args.project_id) if args.project_id else None
+    if entry is None or not entry.repo_path:
+        raise SystemExit("project scope needs --project-id of a registered project with a repo_path")
+    return SkillScope.PROJECT, project_skills_dir(entry.repo_path)
+
+
+def cmd_skills_install(args: argparse.Namespace) -> int:
+    from .skills import PackInstallError, install_pack
+
+    scope, target = _skill_scope_dir(args)
+    try:
+        out = install_pack(args.pack_file, target, scope, replace=args.replace)
+    except PackInstallError as exc:
+        print(f"Install refused: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(out, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_skills_uninstall(args: argparse.Namespace) -> int:
+    from .skills import PackInstallError, uninstall_pack
+
+    _scope, target = _skill_scope_dir(args)
+    try:
+        out = uninstall_pack(args.pack_id, target)
+    except PackInstallError as exc:
+        print(f"Uninstall refused: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(out, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_surfaces(args: argparse.Namespace) -> int:
+    from .surfaces import detect_surfaces
+
+    for s in detect_surfaces():
+        print(json.dumps(s.to_dict(), ensure_ascii=False))
+    return 0
+
+
+def cmd_governance_check(args: argparse.Namespace) -> int:
+    """Dry run of the R6 gates for a prompt. Creates no approval request
+    and executes nothing."""
+    from .governance import evaluate
+
+    store = StateStore()
+    router = _project_router(store, args.project_id)
+    task = Task(goal_id="dry-run", project_id=args.project_id, type="adhoc", role=args.role,
+                definition_of_done=["result_recorded"], autonomy=args.autonomy)
+    skill = router.skill_for_task(task, args.skill) if args.skill else None
+    decision = evaluate(task, args.prompt, store, PolicyEngine(), skill=skill, requested_skill_id=args.skill)
+    print(json.dumps(decision.to_dict(), ensure_ascii=False, indent=2))
+    return 0 if decision.allowed else 2
+
+
+def cmd_evaluations(args: argparse.Namespace) -> int:
+    """v0.5 spec 09 gate 9: recorded evaluation evidence (read-only)."""
+    rows = StateStore().list_evaluations(task_id=args.task_id)
+    summary: dict[str, dict[str, int]] = {}
+    for r in rows:
+        summary.setdefault(r["intelligence_id"], {}).setdefault(r["outcome"], 0)
+        summary[r["intelligence_id"]][r["outcome"]] += 1
+    print(json.dumps({"count": len(rows), "by_intelligence": summary, "recent": rows[-args.limit:]},
+                     indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_remote_kill(args: argparse.Namespace) -> int:
+    """Local operator kill switch for all remote work (spec 17)."""
+    from .remote.bridge import IdentityStore, TaskBridge
+    from .remote.worker import Worker
+
+    store = StateStore()
+    bridge = TaskBridge(store, IdentityStore(), Worker(store))
+    who = _human_identity(args.by)
+    if args.action == "engage":
+        n = bridge.kill(args.reason, who)
+        print(json.dumps({"kill_switch_engaged": True, "requests_blocked": n}))
+    else:
+        bridge.release_kill(args.reason, who)
+        print(json.dumps({"kill_switch_engaged": bridge.killed}))
+    return 0
+
+
+def cmd_remote_status(args: argparse.Namespace) -> int:
+    """Read-only view of the durable remote queue (v0.5 R11). The local
+    operator can inspect it; submitting/approving goes through the
+    authenticated bridge only."""
+    from .remote import worker as remote_worker
+    from .v05_status import remote_queue_summary
+
+    store = StateStore()
+    out = remote_queue_summary(store)
+    if args.request_id:
+        req = remote_worker.get_request(store, args.request_id)
+        if req is None:
+            print(f"No such remote request: {args.request_id}", file=sys.stderr)
+            return 1
+        req.pop("envelope", None)  # goal text stays local; use the bridge status for full detail
+        out["request"] = req
+        out["checkpoints"] = [{"id": c["checkpoint_id"], "status": c["status"], "at": c["created_at"]}
+                              for c in remote_worker.checkpoints_for(store, args.request_id)]
+    print(json.dumps(out, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _load_adapter(name: str, cwd: str | None = None, project_id: str | None = None):
+    """Delegates to adapters.registry (v0.5 R4): Core no longer hardcodes
+    provider modules, and an absent integration comes back as an
+    unavailable MissingAdapter instead of an ImportError. An unknown name
+    still raises ValueError (UnknownAdapterError subclasses it) as before.
+    With project_id (D66/D67) the adapter runs in the project's repo_path
+    under that project's policy."""
+    from .adapters.registry import load_adapter, load_for_project
+
+    if project_id:
+        return load_for_project(name, project_id, cwd=cwd)
+    return load_adapter(name, cwd=cwd)
+
+
+def _project_adapter_factory(project_id: str | None):
+    return lambda name: _load_adapter(name, project_id=project_id)
+
+
+def _batch_adapter_factory(name: str, cwd: str | None = None, project_id: str | None = None):
+    return _load_adapter(name, cwd=cwd, project_id=project_id)
+
+
+_batch_adapter_factory.project_aware = True  # type: ignore[attr-defined]
+
+
+def _project_router(store: StateStore, project_id: str | None) -> Router:
+    """D66: a Router whose skill registry includes the project's own
+    skills, so `--skill <project skill>` resolves both in the governance
+    gates and at execution (including execute-approved)."""
+    from .adapters.registry import project_repo_path
+
+    return Router(state=store, usage_manager=UsageManager(store), token_budget_manager=TokenBudgetManager(),
+                  project_repo_path=project_repo_path(project_id))
+
+
+def main(argv: list[str] | None = None, prog: str = "octavryn") -> int:
     # Windows consoles often default to a legacy codepage (e.g. cp932) that
     # can't encode arbitrary Unicode (Japanese vault content, em dashes,
     # etc.); force UTF-8 on stdout/stderr rather than crashing on print().
@@ -964,7 +1298,9 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
 
-    parser = argparse.ArgumentParser(prog="solomon")
+    # v0.5 R7: `octavryn` is the canonical program name (octavryn.cli
+    # passes prog="octavryn"); `solomon` remains a deprecated alias.
+    parser = argparse.ArgumentParser(prog=prog)
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_discover = sub.add_parser("discover", help="Phase 0 environment discovery")
@@ -974,7 +1310,7 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument(
         "--adapter",
         required=True,
-        choices=["claude_code", "codex", "localai_ollama", "antigravity"],
+        choices=_known_adapter_names(),
     )
     p_run.add_argument("--prompt", required=True)
     p_run.add_argument("--goal-id", dest="goal_id", default=None)
@@ -1014,6 +1350,7 @@ def main(argv: list[str] | None = None) -> int:
     p_route.add_argument("--project-id", dest="project_id", required=True)
     p_route.add_argument("--goal-id", dest="goal_id", default=None)
     p_route.add_argument("--context-budget", dest="context_budget", type=int, default=None)
+    p_route.add_argument("--skill", default=None, help="D66: score candidates for this skill (incl. project skills)")
     p_route.set_defaults(func=cmd_route)
 
     p_replay = sub.add_parser("replay", help="Re-score a stored task now (no mutation); compare to the original agent")
@@ -1037,7 +1374,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_appr_list = appr_sub.add_parser("list", help="List approval requests")
     p_appr_list.add_argument("--project-id", dest="project_id", default=None)
-    p_appr_list.add_argument("--status", default=None, choices=["pending", "approved", "denied"])
+    p_appr_list.add_argument("--status", default=None, choices=["pending", "approved", "denied", "executed"])
     p_appr_list.set_defaults(func=cmd_approvals_list)
 
     p_appr_decide = appr_sub.add_parser("decide", help="Approve or deny a pending request")
@@ -1046,6 +1383,10 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--approve", dest="approve", action="store_true")
     group.add_argument("--deny", dest="approve", action="store_false")
     p_appr_decide.add_argument("--note", default=None)
+    p_appr_decide.add_argument(
+        "--decided-by", dest="decided_by", default=None,
+        help="Human identity reference recorded with the decision (default: OS login name)",
+    )
     p_appr_decide.set_defaults(func=cmd_approvals_decide)
 
     p_exec = sub.add_parser("execute-approved", help="Execute a Task whose approval request was approved")
@@ -1066,6 +1407,11 @@ def main(argv: list[str] | None = None) -> int:
     p_rar.add_argument("--goal-id", dest="goal_id", default=None)
     p_rar.add_argument("--max-attempts", dest="max_attempts", type=int, default=2)
     p_rar.add_argument("--timeout", type=int, default=600)
+    p_rar.add_argument("--skill", default=None, help="v0.5: explicit skill id (default: the role's core skill)")
+    p_rar.add_argument(
+        "--autonomy", type=int, default=None, choices=range(0, 6), metavar="0-5",
+        help="v0.4 autonomy dial: lower values add caution below the base policy floor (never below it)",
+    )
     p_rar.set_defaults(func=cmd_route_and_run)
 
     p_debate = sub.add_parser("debate", help="Bounded multi-agent debate (FR-18, opt-in only)")
@@ -1142,14 +1488,14 @@ def main(argv: list[str] | None = None) -> int:
 
     p_gateway_eval = sub.add_parser(
         "gateway-evaluate",
-        help="v0.4 Phase 2: evaluate whether a request should delegate to Solomon (advisory only, not yet wired into any hook)",
+        help="v0.4 Phase 2: evaluate whether a request should delegate to Octavryn (advisory only, not yet wired into any hook)",
     )
     p_gateway_eval.add_argument("--request", required=True, help="The user's raw request text")
     p_gateway_eval.add_argument("--caller-type", dest="caller_type", default="claude_code")
     p_gateway_eval.add_argument("--project-hint", dest="project_hint", default=None)
     p_gateway_eval.add_argument("--working-directory", dest="working_directory", default=None)
     p_gateway_eval.add_argument(
-        "--mode", default="AUTO", choices=["AUTO", "FORCE_LOCAL", "FORCE_SOLOMON", "SHADOW"],
+        "--mode", default="AUTO", choices=["AUTO", "FORCE_LOCAL", "FORCE_OCTAVRYN", "FORCE_SOLOMON", "SHADOW"],
     )
     p_gateway_eval.set_defaults(func=cmd_gateway_evaluate)
 
@@ -1164,9 +1510,97 @@ def main(argv: list[str] | None = None) -> int:
     p_verify.add_argument("task_id")
     p_verify.set_defaults(func=cmd_verify_task)
 
+    p_intel = sub.add_parser("intelligences", help="v0.5: Intelligence Registry (read-only discovery)")
+    p_intel.add_argument("--refresh", action="store_true", help="Run read-only health checks and update the registry")
+    p_intel.add_argument("--tools", action="store_true", help="Also list discovered CLI tools and MCP server names")
+    p_intel.set_defaults(func=cmd_intelligences)
+
+    p_cconf = sub.add_parser("capability-confirm", help="v0.5: record human-confirmed capability evidence (not a permission)")
+    p_cconf.add_argument("intelligence_id")
+    p_cconf.add_argument("capability")
+    p_cconf.add_argument("--confirmed-by", dest="confirmed_by", default=None)
+    p_cconf.set_defaults(func=cmd_capability_confirm)
+
+    p_skills = sub.add_parser("skills", help="v0.5: list resolved skills and conflicts; install/uninstall packs")
+    p_skills.add_argument("--project-id", dest="project_id", default=None)
+    p_skills.set_defaults(func=cmd_skills)
+    skills_sub = p_skills.add_subparsers(dest="skills_command")
+    p_sinst = skills_sub.add_parser("install", help="Validate and install a Skill Pack (grants no permission)")
+    p_sinst.add_argument("pack_file")
+    p_sinst.add_argument("--scope", choices=["user", "project"], default="user")
+    p_sinst.add_argument("--project-id", dest="project_id", default=None)
+    p_sinst.add_argument("--replace", action="store_true", help="Replace an installed pack with a higher version")
+    p_sinst.set_defaults(func=cmd_skills_install)
+    p_sun = skills_sub.add_parser("uninstall", help="Uninstall a pack (moved to .removed/, not deleted)")
+    p_sun.add_argument("pack_id")
+    p_sun.add_argument("--scope", choices=["user", "project"], default="user")
+    p_sun.add_argument("--project-id", dest="project_id", default=None)
+    p_sun.set_defaults(func=cmd_skills_uninstall)
+
+    p_surf = sub.add_parser("surfaces", help="v0.5: detect optional desktop surfaces (read-only)")
+    p_surf.set_defaults(func=cmd_surfaces)
+
+    p_gov = sub.add_parser("governance-check", help="v0.5: dry-run the governance gates for a prompt")
+    p_gov.add_argument("--project-id", dest="project_id", required=True)
+    p_gov.add_argument("--prompt", required=True)
+    p_gov.add_argument("--role", default="coder")
+    p_gov.add_argument("--skill", default=None)
+    p_gov.add_argument("--autonomy", type=int, default=None, choices=range(0, 6), metavar="0-5")
+    p_gov.set_defaults(func=cmd_governance_check)
+
+    p_evals = sub.add_parser("evaluations", help="v0.5: recorded evaluation evidence per task/intelligence")
+    p_evals.add_argument("--task-id", dest="task_id", default=None)
+    p_evals.add_argument("--limit", type=int, default=20)
+    p_evals.set_defaults(func=cmd_evaluations)
+
+    p_remote = sub.add_parser("remote", help="v0.5: remote task queue (read-only)")
+    remote_sub = p_remote.add_subparsers(dest="remote_command", required=True)
+    p_rstat = remote_sub.add_parser("status", help="Queue counts, workers, and optionally one request")
+    p_rstat.add_argument("--request-id", dest="request_id", default=None)
+    p_rstat.set_defaults(func=cmd_remote_status)
+    p_rkill = remote_sub.add_parser("kill", help="Engage/release the remote bridge kill switch (local operator)")
+    p_rkill.add_argument("action", choices=["engage", "release"])
+    p_rkill.add_argument("--reason", required=True)
+    p_rkill.add_argument("--by", default=None, help="Human identity (default: OS login name)")
+    p_rkill.set_defaults(func=cmd_remote_kill)
+
+    from .migration import add_migration_parsers
+
+    add_migration_parsers(sub)
+
+    from .publication import add_publication_parsers
+
+    add_publication_parsers(sub)
+
+    from .mcp_migration import add_mcp_migration_parsers
+
+    add_mcp_migration_parsers(sub)
+
+    from .desktop_mcp import add_desktop_mcp_parsers
+
+    add_desktop_mcp_parsers(sub)
+    from .codex_mcp import add_codex_mcp_parsers
+
+    add_codex_mcp_parsers(sub)
+
     args = parser.parse_args(argv)
     return args.func(args)
 
 
+DEPRECATION_NOTICE = (
+    "note: `solomon` is deprecated; use `octavryn` (same commands). "
+    "Set OCTAVRYN_SUPPRESS_DEPRECATION=1 to hide this notice."
+)
+
+
+def legacy_main(argv: list[str] | None = None) -> int:
+    """`python -m solomon.cli` / `solomon`: the deprecated alias (spec 08).
+    Prints one line to stderr (stdout stays machine-readable) and then runs
+    exactly the same commands."""
+    if os.environ.get("OCTAVRYN_SUPPRESS_DEPRECATION") != "1":
+        print(DEPRECATION_NOTICE, file=sys.stderr)
+    return main(argv, prog="solomon")
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(legacy_main())

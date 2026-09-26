@@ -25,7 +25,16 @@ from .models import Goal, Task, TaskStatus
 from .result import TaskResult, Usage, UsageProvenance
 from .usage_record import UsageRecord, usage_record_from_task_result
 
-_DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "state" / "solomon.sqlite3"
+def _resolve_default_db_path() -> Path:
+    # v0.5 R7: the migrated state/octavryn.sqlite3 once `octavryn migrate
+    # state --apply` has run, else the legacy state/solomon.sqlite3
+    # (OCTAVRYN_DB overrides both). See migration.py.
+    from .migration import resolve_default_db_path
+
+    return resolve_default_db_path()
+
+
+_DEFAULT_DB_PATH = _resolve_default_db_path()
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS goals (
@@ -94,6 +103,41 @@ CREATE TABLE IF NOT EXISTS approval_requests (
     decided_at TEXT,
     decision_note TEXT
 );
+
+-- v0.5 R2: Intelligence Registry. Rows are never deleted -- a
+-- participant that disappears becomes availability='absent', so
+-- historical task_results/usage keyed by its id stay attributable.
+CREATE TABLE IF NOT EXISTS intelligences (
+    intelligence_id TEXT PRIMARY KEY,
+    descriptor TEXT NOT NULL,
+    availability TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL
+);
+
+-- v0.5: evaluation records (spec 09 gate 9). Evidence only.
+CREATE TABLE IF NOT EXISTS evaluations (
+    eval_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    intelligence_id TEXT NOT NULL,
+    skill_id TEXT,
+    outcome TEXT NOT NULL,
+    retries INTEGER NOT NULL,
+    tokens INTEGER,
+    latency_s REAL,
+    participants TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+
+-- v0.5 R2: capability evidence a human explicitly confirmed. Evidence
+-- only, never a permission grant.
+CREATE TABLE IF NOT EXISTS capability_confirmations (
+    intelligence_id TEXT NOT NULL,
+    capability TEXT NOT NULL,
+    confirmed_by TEXT NOT NULL,
+    confirmed_at TEXT NOT NULL,
+    PRIMARY KEY (intelligence_id, capability)
+);
 """
 
 
@@ -105,7 +149,16 @@ class StateStore:
         self._lock = threading.RLock()
         with self._lock:
             self.conn.executescript(_SCHEMA)
+            self._add_column_if_missing("approval_requests", "decided_by", "TEXT")
             self.conn.commit()
+
+    def _add_column_if_missing(self, table: str, column: str, decl: str) -> None:
+        """Additive, idempotent in-place schema upgrade for databases
+        created by an older version (v0.5 R6: approval_requests.decided_by).
+        Existing rows get NULL, meaning 'not recorded', never a guess."""
+        cols = {row[1] for row in self.conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     def close(self):
         with self._lock:
@@ -368,6 +421,114 @@ class StateStore:
             "avg_duration_seconds": (sum(durations) / len(durations)) if durations else None,
         }
 
+    def get_verified_completions(self, agent: str) -> dict[str, int]:
+        """v0.5 R2: {role: count} of Tasks run by `agent` that reached
+        COMPLETE, i.e. passed their Definition of Done. RESULT_RECEIVED
+        alone does not count: an agent claiming success is not evidence
+        (GLOBAL_POLICY completion.agent_claim_is_sufficient: false)."""
+        counts: dict[str, int] = {}
+        seen: set[str] = set()
+        for result, _row_project_id, task in self._iter_result_rows():
+            if result.get("agent") != agent or task.get("status") != "COMPLETE":
+                continue
+            task_id = task.get("task_id")
+            if task_id in seen:
+                continue
+            seen.add(task_id)
+            role = task.get("role") or "unknown"
+            counts[role] = counts.get(role, 0) + 1
+        return counts
+
+    def save_evaluation(self, rec) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO evaluations (task_id, intelligence_id, skill_id, outcome, retries, tokens, latency_s, "
+                "participants, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (rec.task_id, rec.intelligence_id, rec.skill_id, rec.outcome, rec.retries, rec.tokens,
+                 rec.latency_s, json.dumps(rec.participants), rec.recorded_at),
+            )
+            self.conn.commit()
+
+    def list_evaluations(self, task_id: str | None = None) -> list[dict]:
+        with self._lock:
+            q = ("SELECT task_id, intelligence_id, skill_id, outcome, retries, tokens, latency_s, participants, "
+                 "recorded_at FROM evaluations")
+            params: tuple = ()
+            if task_id:
+                q += " WHERE task_id = ?"
+                params = (task_id,)
+            rows = self.conn.execute(q + " ORDER BY eval_id", params).fetchall()
+        keys = ["task_id", "intelligence_id", "skill_id", "outcome", "retries", "tokens", "latency_s",
+                "participants", "recorded_at"]
+        out = []
+        for r in rows:
+            d = dict(zip(keys, r))
+            d["participants"] = json.loads(d["participants"])
+            out.append(d)
+        return out
+
+    def upsert_intelligence(self, intelligence_id: str, descriptor: dict, availability: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO intelligences (intelligence_id, descriptor, availability, first_seen, last_seen) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(intelligence_id) DO UPDATE SET "
+                "descriptor = excluded.descriptor, availability = excluded.availability, "
+                "last_seen = excluded.last_seen",
+                (intelligence_id, json.dumps(descriptor, ensure_ascii=False), availability, now, now),
+            )
+            self.conn.commit()
+
+    def mark_intelligence_absent(self, intelligence_id: str) -> None:
+        """Keeps the row and descriptor (historical identity); only the
+        availability changes. last_seen is left as the last real sighting."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE intelligences SET availability = 'absent' WHERE intelligence_id = ?",
+                (intelligence_id,),
+            )
+            self.conn.commit()
+
+    def list_intelligences(self) -> list[dict]:
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT intelligence_id, descriptor, availability, first_seen, last_seen "
+                "FROM intelligences ORDER BY intelligence_id"
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "intelligence_id": r[0],
+                "descriptor": json.loads(r[1]),
+                "availability": r[2],
+                "first_seen": r[3],
+                "last_seen": r[4],
+            }
+            for r in rows
+        ]
+
+    def confirm_capability(self, intelligence_id: str, capability: str, confirmed_by: str) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO capability_confirmations "
+                "(intelligence_id, capability, confirmed_by, confirmed_at) VALUES (?, ?, ?, ?)",
+                (intelligence_id, capability, confirmed_by, datetime.now(timezone.utc).isoformat()),
+            )
+            self.conn.commit()
+
+    def list_capability_confirmations(self, intelligence_id: str | None = None) -> list[dict]:
+        with self._lock:
+            query = "SELECT intelligence_id, capability, confirmed_by, confirmed_at FROM capability_confirmations"
+            params: tuple = ()
+            if intelligence_id is not None:
+                query += " WHERE intelligence_id = ?"
+                params = (intelligence_id,)
+            rows = self.conn.execute(query, params).fetchall()
+        return [
+            {"intelligence_id": r[0], "capability": r[1], "confirmed_by": r[2], "confirmed_at": r[3]}
+            for r in rows
+        ]
+
     def get_role_performance(self, project_id: str | None = None) -> dict[str, dict[str, dict]]:
         """Phase 7 Learning Router: {role: {agent: {count, successes,
         success_rate}}} -- the raw project/task-type performance table a
@@ -553,7 +714,7 @@ class StateStore:
         with self._lock:
             placeholders = ",".join("?" * len(normalized))
             cur = self.conn.execute(
-                f"SELECT DISTINCT path, task_id FROM file_locks "
+                f"SELECT DISTINCT path, task_id FROM file_locks "  # nosec B608 - only "?" placeholders interpolated
                 f"WHERE released_at IS NULL AND path IN ({placeholders})",
                 normalized,
             )
@@ -662,7 +823,7 @@ class StateStore:
         with self._lock:
             cur = self.conn.execute(
                 "SELECT request_id, project_id, risk, reason, task_params, status, "
-                "requested_at, decided_at, decision_note FROM approval_requests WHERE request_id = ?",
+                "requested_at, decided_at, decision_note, decided_by FROM approval_requests WHERE request_id = ?",
                 (request_id,),
             )
             row = cur.fetchone()
@@ -670,11 +831,27 @@ class StateStore:
             return None
         keys = [
             "request_id", "project_id", "risk", "reason", "task_params",
-            "status", "requested_at", "decided_at", "decision_note",
+            "status", "requested_at", "decided_at", "decision_note", "decided_by",
         ]
         entry = dict(zip(keys, row))
         entry["task_params"] = json.loads(entry["task_params"])
         return entry
+
+    def consume_approval_request(self, request_id: str) -> bool:
+        """v0.5 R6: approved -> executed, exactly once. The conditional
+        UPDATE is atomic under the lock, so two concurrent executions of
+        one approval cannot both succeed."""
+        with self._lock:
+            cur = self.conn.execute(
+                "UPDATE approval_requests SET status = 'executed' WHERE request_id = ? AND status = 'approved'",
+                (request_id,),
+            )
+            self.conn.commit()
+            ok = cur.rowcount == 1
+        if ok:
+            req = self.get_approval_request(request_id)
+            self.log_event(project_id=req["project_id"], event="approval_consumed", detail=request_id)
+        return ok
 
     def list_approval_requests(self, project_id: str | None = None, status: str | None = None) -> list[dict]:
         with self._lock:
@@ -691,20 +868,24 @@ class StateStore:
             ids = [row[0] for row in cur.fetchall()]
             return [self.get_approval_request(i) for i in ids]
 
-    def decide_approval_request(self, request_id: str, approved: bool, note: str = "") -> bool:
+    def decide_approval_request(
+        self, request_id: str, approved: bool, note: str = "", decided_by: str | None = None
+    ) -> bool:
         """Returns False if the request doesn't exist or is no longer pending
-        (decisions are not overwritten -- a decided request stays decided)."""
+        (decisions are not overwritten -- a decided request stays decided).
+        decided_by (v0.5): the human identity reference that decided."""
         with self._lock:
             existing = self.get_approval_request(request_id)
             if existing is None or existing["status"] != "pending":
                 return False
             self.conn.execute(
-                "UPDATE approval_requests SET status = ?, decided_at = ?, decision_note = ? "
+                "UPDATE approval_requests SET status = ?, decided_at = ?, decision_note = ?, decided_by = ? "
                 "WHERE request_id = ?",
                 (
                     "approved" if approved else "denied",
                     datetime.now(timezone.utc).isoformat(),
                     note,
+                    decided_by,
                     request_id,
                 ),
             )

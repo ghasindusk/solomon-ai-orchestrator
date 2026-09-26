@@ -38,9 +38,14 @@ _TOKEN_RE = re.compile(r"[\w一-龠ぁ-んァ-ヶー]+", re.UNICODE)
 # well-known key formats + a generic "key/token/secret/password = value"
 # catch-all) -- a lean first pass, not a claimed-complete secret scanner.
 _SECRET_PATTERNS = [
-    re.compile(r"sk-[A-Za-z0-9]{20,}"),
+    # v0.5: `sk-` keys may contain '-'/'_' (e.g. Anthropic "sk-ant-api03-..."),
+    # which the v0.4 alnum-only pattern missed.
+    re.compile(r"sk-[A-Za-z0-9_\-]{20,}"),
     re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(r"ghp_[A-Za-z0-9]{36}"),
+    re.compile(r"github_pat_[A-Za-z0-9_]{40,}"),
+    re.compile(r"AIza[0-9A-Za-z_\-]{35}"),
+    re.compile(r"xox[abprs]-[A-Za-z0-9\-]{10,}"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL),
     re.compile(r"(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*[\"']?[A-Za-z0-9\-_.]{12,}"),
 ]

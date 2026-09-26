@@ -35,6 +35,7 @@ syncs the result back with `git pull --ff-only` in both directions.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -44,21 +45,48 @@ from ..models import Task
 from ..registry import ProjectRegistry
 from ..result import TaskResult, Usage, UsageProvenance
 from ..sandbox_clone import is_incompatible_path, local_clone_path, sync_after, sync_before
-from .base import NO_BACKGROUND_SUFFIX, AdapterHealth, AgentAdapter
+from ..descriptors import Locality
+from .base import AdapterDeclaration, NO_BACKGROUND_SUFFIX, AdapterHealth, AgentAdapter
 
 # codex is typically installed via npm, which shims it as a .CMD file on
 # Windows; subprocess.run(list) uses CreateProcess directly and cannot exec
 # .cmd files without going through the shell (WinError 2).
 _USE_SHELL = sys.platform.startswith("win")
 
+# D76: turn failures that mean "this provider cannot be used right now"
+# (credentials rejected, service/transport down), as opposed to a task that
+# ran and failed. Only these let execute_with_fallback try another provider.
+_PROVIDER_UNAVAILABLE = re.compile(
+    r"\b(401|403|unauthori[sz]ed|forbidden|incorrect api key|not logged in|login required|"
+    r"stream disconnected|connection (refused|reset)|service unavailable|503|502|timed? ?out)\b",
+    re.IGNORECASE,
+)
+
 
 class CodexAdapter(AgentAdapter):
     name = "codex"
+    declaration = AdapterDeclaration(
+        name="codex",
+        display_name="Codex CLI",
+        adapter_type="cli",
+        provider="openai",
+        locality=Locality.CLOUD,
+        capabilities=['coding', 'debugging', 'refactoring', 'testing', 'review'],
+        credentials="provider_managed",
+        telemetry="tokens",
+        mcp_tool_support=True,
+    )
 
     def __init__(self, binary: str = "codex", cwd: str | None = None, sandbox: str = "workspace-write"):
         self.binary = binary
         self.cwd = cwd
         self.sandbox = sandbox
+
+    def apply_profile(self, profile: dict) -> None:
+        """Project execution profile (D67): only narrows the sandbox
+        (read-only or workspace-write; danger-full-access is never set)."""
+        if profile.get("sandbox") in ("read-only", "workspace-write"):
+            self.sandbox = profile["sandbox"]
 
     def health(self) -> AdapterHealth:
         path = shutil.which(self.binary)
@@ -71,7 +99,7 @@ class CodexAdapter(AgentAdapter):
                 encoding="utf-8",
                 errors="replace",
                 timeout=15,
-                shell=_USE_SHELL,
+                shell=_USE_SHELL,  # nosec B602 - fixed argv; prompt goes via stdin, never the shell (v0.5 review)
             )
             return AdapterHealth(proc.returncode == 0, proc.stdout.strip() or proc.stderr.strip())
         except Exception as exc:  # noqa: BLE001 - health check must not raise
@@ -130,7 +158,7 @@ class CodexAdapter(AgentAdapter):
                 errors="replace",
                 timeout=timeout_s,
                 cwd=run_cwd,
-                shell=_USE_SHELL,
+                shell=_USE_SHELL,  # nosec B602 - fixed argv; prompt goes via stdin, never the shell (v0.5 review)
             )
         except subprocess.TimeoutExpired as exc:
             note = f" (any partial changes may be uncommitted in local clone {run_cwd})" if active_clone else ""
@@ -154,11 +182,20 @@ class CodexAdapter(AgentAdapter):
             )
 
         summary_text, usage = self._parse_jsonl(proc.stdout)
+        turn_error = self._turn_failure(proc.stdout)
         if not summary_text:
             summary_text = proc.stdout.strip()
 
-        status = "RESULT_RECEIVED" if proc.returncode == 0 else "FAILED"
+        status = "RESULT_RECEIVED" if proc.returncode == 0 and turn_error is None else "FAILED"
         uncertainties = [] if proc.returncode == 0 else [proc.stderr.strip()[:500]]
+        if turn_error is not None:
+            # D76: report what Codex said went wrong (redacted), not the raw
+            # JSONL; an auth/transport failure means the provider could not
+            # be used at all, so fallback may try the next candidate.
+            summary_text = f"codex turn failed: {turn_error}"
+            uncertainties.insert(0, f"provider_error: {turn_error}")
+            if _PROVIDER_UNAVAILABLE.search(turn_error):
+                uncertainties.insert(0, "unavailable: provider authentication/transport failure")
 
         if active_clone is not None:
             original_repo_path, clone_path = active_clone
@@ -197,6 +234,26 @@ class CodexAdapter(AgentAdapter):
         except Exception:  # noqa: BLE001 - registry lookup must not crash execute()
             return None
         return project.repo_path if project else None
+
+    @staticmethod
+    def _turn_failure(stdout: str) -> str | None:
+        """D76: the message of a `turn.failed` event (secrets redacted), or
+        None when the turn did not fail."""
+        from ..knowledge import redact_secrets
+
+        for line in reversed(stdout.splitlines()):
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("type") == "turn.failed":
+                msg = str((event.get("error") or {}).get("message") or "turn failed")
+                msg = re.sub(r"sk-[A-Za-z0-9_\-]{2,}\**[A-Za-z0-9_\-]*", "sk-<redacted>", msg)
+                return redact_secrets(msg)[0][:400]
+        return None
 
     @staticmethod
     def _parse_jsonl(stdout: str) -> tuple[str, Usage]:

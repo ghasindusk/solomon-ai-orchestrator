@@ -3,8 +3,9 @@
 # Codex's Windows sandbox setup fails immediately under paths on a
 # cloud-sync virtual drive (confirmed root cause: Google Drive for
 # Desktop's virtual drive doesn't support the SetNamedSecurityInfoW ACL
-# API Codex's sandbox helper needs). A local-clone mirror was chosen
-# instead of --dangerously-bypass-approvals-and-sandbox.
+# API Codex's sandbox helper needs -- see
+# 08_Discovery/PHASE0_DISCOVERY_REPORT.md, and DECISIONS.md for why a
+# local-clone mirror was chosen over --dangerously-bypass-approvals-and-sandbox).
 #
 # For any codex task whose working directory resolves under one of the
 # paths below, codex_adapter.py runs against a local git clone on a real

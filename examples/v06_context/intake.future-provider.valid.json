@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.6",
+  "intake_id": "intake-demo-1",
+  "project_id": "demo",
+  "adapter_id": "manual-text",
+  "adapter_version": "1",
+  "provider": "future-provider",
+  "source_kind": "manual",
+  "source_locator": null,
+  "captured_at": "2026-09-26T05:00:00Z",
+  "source_created_at": null,
+  "content_sha256": "bc9109c15278e73ce704fd8d2ddc943d41fa0b8e2c5501e932cd225c34accb11",
+  "content_ref": "blob:demo-1"
+}

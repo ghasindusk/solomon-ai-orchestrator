@@ -1,0 +1,14 @@
+# Example Skill Pack (spec 04 example). Not loaded by default; install it
+# into a project's .octavryn/skills/ or ~/.octavryn/skills/ to use it.
+schema_version: "0.5"
+id: minecraft_mod_development
+version: 1
+name: Minecraft mod development
+skills:
+  - id: minecraft_mod_development
+    version: 1
+    name: Minecraft mod development
+    requires:
+      capabilities: [repository_analysis, java_coding, testing]
+      tools: [git, java, gradle]
+    verification: [build, tests]

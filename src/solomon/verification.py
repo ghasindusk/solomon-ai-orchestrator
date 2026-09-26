@@ -18,6 +18,7 @@ is evidence, not completion. Solomon owns state transition").
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from dataclasses import dataclass, field
 
 from .models import Task, TaskStatus
@@ -73,7 +74,11 @@ def _check_build_passes(task: Task, project_registry: ProjectRegistry) -> bool |
     if project is None or not project.build_command or not project.repo_path:
         return None
     try:
-        proc = subprocess.run(
+        # Trust boundary (v0.5 review, D56): build_command comes from the
+        # user's own gitignored projects.registry.yaml, and anyone who can edit
+        # that file can run commands here. shell=True is needed for commands
+        # like `flutter analyze` / `.\gradlew.bat build` on Windows.
+        proc = subprocess.run(  # nosec B602
             project.build_command,
             shell=True,
             cwd=project.repo_path,
@@ -85,6 +90,50 @@ def _check_build_passes(task: Task, project_registry: ProjectRegistry) -> bool |
     except (subprocess.TimeoutExpired, OSError):
         return False
     return proc.returncode == 0
+
+
+def _check_artifact(criterion: str, task: Task, store: StateStore, project_registry: ProjectRegistry) -> bool | None:
+    """D78: `artifact:<repo-relative path>`. Satisfied only when the file
+    exists inside the project's repo_path, was written after this task's
+    first adapter run started (so a pre-existing file cannot vouch for a
+    task that did nothing), and, when the project registers an
+    artifact_verify_command, that command succeeds on it. None
+    (unverifiable) when the project has no repo_path or artifact_pattern
+    to check against."""
+    import re
+    from datetime import datetime
+
+    rel = criterion.split(":", 1)[1]
+    project = project_registry.get(task.project_id)
+    if project is None or not project.repo_path or not project.artifact_pattern:
+        return None
+    if not re.fullmatch(project.artifact_pattern, rel):
+        return False  # never run a verify command on a path the pattern does not allow
+    repo = Path(project.repo_path).resolve()
+    path = (repo / rel).resolve()
+    try:
+        path.relative_to(repo)
+    except ValueError:
+        return False
+    if not path.is_file():
+        return False
+    starts = [r.get("started_at") for r in store.get_task_results(task.task_id) if r.get("started_at")]
+    if not starts:
+        return False
+    started = min(datetime.fromisoformat(s) for s in starts)
+    if path.stat().st_mtime < started.timestamp() - 2:  # 2 s clock-granularity slack
+        return False
+    if project.artifact_verify_command:
+        try:
+            proc = subprocess.run(  # nosec B602 - registry-configured command (D56 trust boundary); {path} matched artifact_pattern
+                project.artifact_verify_command.replace("{path}", rel),
+                shell=True, cwd=project.repo_path, capture_output=True, encoding="utf-8", errors="replace",
+                timeout=_BUILD_TIMEOUT_S,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return False
+        return proc.returncode == 0
+    return True
 
 
 def verify_definition_of_done(
@@ -99,6 +148,11 @@ def verify_definition_of_done(
         elif criterion == "build_passes":
             registry = project_registry or ProjectRegistry()
             ok = _check_build_passes(task, registry)
+            if ok is None:
+                verification.unverifiable.append(criterion)
+                continue
+        elif criterion.startswith("artifact:"):
+            ok = _check_artifact(criterion, task, store, project_registry or ProjectRegistry())
             if ok is None:
                 verification.unverifiable.append(criterion)
                 continue

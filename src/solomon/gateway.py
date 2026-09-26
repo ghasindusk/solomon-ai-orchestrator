@@ -35,7 +35,16 @@ def _utcnow() -> str:
 class GatewayMode(str, Enum):
     AUTO = "AUTO"
     FORCE_LOCAL = "FORCE_LOCAL"
-    FORCE_SOLOMON = "FORCE_SOLOMON"
+    FORCE_OCTAVRYN = "FORCE_OCTAVRYN"
+    # v0.5 (D53): legacy name kept as an alias member. GatewayMode.FORCE_SOLOMON
+    # is FORCE_OCTAVRYN, and the string "FORCE_SOLOMON" still parses (see _missing_).
+    FORCE_SOLOMON = "FORCE_OCTAVRYN"
+
+    @classmethod
+    def _missing_(cls, value):
+        if value == "FORCE_SOLOMON":
+            return cls.FORCE_OCTAVRYN
+        return None
     SHADOW = "SHADOW"
 
 
@@ -138,8 +147,8 @@ def should_delegate(
     if project_id in _SELF_REFERENTIAL_PROJECT_IDS:
         return DelegationDecision(False, "self-referential project, CLAUDE.md exempts it from routing", [])
 
-    if mode == GatewayMode.FORCE_SOLOMON:
-        return DelegationDecision(True, "FORCE_SOLOMON mode", [])
+    if mode == GatewayMode.FORCE_OCTAVRYN:
+        return DelegationDecision(True, "FORCE_OCTAVRYN mode", [])
 
     if project_id is None:
         return DelegationDecision(False, "no registered project matched (FR-02: never guess)", [])

@@ -49,3 +49,13 @@ def bootstrap_example_configs():
             real_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(example_path, real_path)
     yield
+
+
+@pytest.fixture(autouse=True)
+def isolate_project_policies(tmp_path, monkeypatch):
+    """D67: the real 04_Config_Schemas/project_policies.yaml restricts real
+    projects; tests must not depend on it. Each test starts with no
+    policy file (unrestricted, the pre-D67 behaviour) and opts in by
+    setting OCTAVRYN_PROJECT_POLICIES itself."""
+    monkeypatch.setenv("OCTAVRYN_PROJECT_POLICIES", str(tmp_path / "no_project_policies.yaml"))
+    yield

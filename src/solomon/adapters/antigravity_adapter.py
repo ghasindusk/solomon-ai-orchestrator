@@ -21,16 +21,37 @@ import subprocess
 
 from ..models import Task
 from ..result import TaskResult, Usage, UsageProvenance
-from .base import AdapterHealth, AgentAdapter
+from ..descriptors import Locality
+from .base import AdapterDeclaration, AdapterHealth, AgentAdapter
 
 
 class AntigravityAdapter(AgentAdapter):
     name = "antigravity"
+    declaration = AdapterDeclaration(
+        name="antigravity",
+        display_name="Antigravity CLI (agy)",
+        adapter_type="cli",
+        provider="google",
+        locality=Locality.CLOUD,
+        capabilities=['agentic_tasks', 'environment_operations', 'multi_step_work', 'coding'],
+        credentials="provider_managed",
+        telemetry="none",
+        mcp_tool_support=True,
+    )
 
     def __init__(self, binary: str = "agy", cwd: str | None = None, sandbox: bool = True):
         self.binary = binary
         self.cwd = cwd
         self.sandbox = sandbox
+        self.mode: str | None = None
+
+    def apply_profile(self, profile: dict) -> None:
+        """Project execution profile (D67). The sandbox can only be kept
+        on (project_policy rejects sandbox: false); mode=plan keeps agy
+        from editing files."""
+        self.sandbox = True
+        if profile.get("mode") in ("plan", "accept-edits"):
+            self.mode = profile["mode"]
 
     def health(self) -> AdapterHealth:
         path = shutil.which(self.binary)
@@ -50,6 +71,8 @@ class AntigravityAdapter(AgentAdapter):
         cmd = [self.binary, "-p", prompt, "--output-format", "json"]
         if self.sandbox:
             cmd.append("--sandbox")
+        if self.mode:
+            cmd += ["--mode", self.mode]
         try:
             proc = subprocess.run(
                 cmd,

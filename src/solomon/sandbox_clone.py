@@ -143,7 +143,7 @@ def sync_after(original_repo: Path, clone_path: Path, task_id: str) -> GitResult
             add = _git(["add", "-A"], cwd=clone_path)
             if add.returncode != 0:
                 return GitResult(False, f"git add failed: {add.stderr.strip()[:500]}")
-            commit = _git(["commit", "-m", f"solomon: codex task {task_id}"], cwd=clone_path)
+            commit = _git(["commit", "-m", f"octavryn: codex task {task_id}"], cwd=clone_path)
             if commit.returncode != 0:
                 return GitResult(False, f"git commit failed: {commit.stderr.strip()[:500]}")
 

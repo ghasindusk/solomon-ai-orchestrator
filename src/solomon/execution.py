@@ -47,6 +47,8 @@ class FallbackAttempt:
 class ExecutionOutcome:
     final_result: TaskResult | None
     attempts: list[FallbackAttempt] = field(default_factory=list)
+    # v0.5 R6: set when governance stopped execution before any adapter ran.
+    blocked: object | None = None  # governance.GovernanceDecision
 
 
 def execute_with_fallback(
@@ -59,6 +61,8 @@ def execute_with_fallback(
     max_attempts: int = 2,
     timeout_s: int = 600,
     gpu_telemetry: dict | None = None,
+    authorized: bool = False,
+    skill=None,
 ) -> ExecutionOutcome:
     """adapter_factory(name) -> AgentAdapter, so this module doesn't import
     the CLI's adapter-lookup table (keeps it independent/testable). policy
@@ -70,9 +74,28 @@ def execute_with_fallback(
     busy with something else (e.g. the user playing Minecraft)."""
     if state is not None and policy is None:
         policy = PolicyEngine()
-    candidates = router.candidates_for_role(task.role)
+    # v0.5 R6 defense in depth: a caller that has not already run the
+    # governance gates (or consumed an approval) gets them here, so library
+    # use cannot bypass what the CLI enforces. Without a StateStore there
+    # is nowhere to record an approval, so it fails closed on anything that
+    # is not plainly allowed.
+    if not authorized:
+        from .governance import evaluate
+
+        decision = evaluate(task, prompt, state, policy, skill=skill) if state is not None else None
+        if decision is None:
+            from .governance import GateResult, GovernanceDecision
+
+            decision = GovernanceDecision(risk=task.risk, gates=[GateResult(
+                "state", "deny", "no StateStore: cannot evaluate or record governance")])
+        if not decision.allowed:
+            return ExecutionOutcome(final_result=None, blocked=decision)
+    # skill is forwarded only when given, keeping the v0.4 call shapes of
+    # candidates_for_role/route (both are override seams).
+    skill_kw = {"skill": skill} if skill is not None else {}
+    candidates = router.candidates_for_role(task.role, **skill_kw)
     health_checks = {name: adapter_factory(name).health() for name in candidates}
-    scores: list[AgentScore] = router.route(task, health_checks=health_checks, gpu_telemetry=gpu_telemetry)
+    scores: list[AgentScore] = router.route(task, health_checks=health_checks, gpu_telemetry=gpu_telemetry, **skill_kw)
 
     outcome = ExecutionOutcome(final_result=None)
     for score in scores[:max_attempts]:
@@ -103,6 +126,7 @@ def execute_with_fallback(
 
         if result.status != "FAILED" or not _is_retryable_failure(result, health):
             outcome.final_result = result
+            _evaluate(state, task, outcome, skill)
             return outcome
 
         if state is not None:
@@ -114,6 +138,31 @@ def execute_with_fallback(
                 detail=result.status,
             )
 
-    if outcome.attempts:
-        outcome.final_result = outcome.attempts[-1].result
+    # D77: the final result is the last adapter that actually ran. A later
+    # *skipped* candidate must not erase it (a real FAILED would otherwise be
+    # reported as "no adapter produced a result" and relabelled BLOCKED).
+    executed = [a.result for a in outcome.attempts if a.result is not None]
+    if executed:
+        outcome.final_result = executed[-1]
+    if outcome.final_result is None and state is not None:
+        # D71: every candidate was unavailable (or none existed). Before,
+        # the Task stayed QUEUED forever; BLOCKED says "nothing could run
+        # it" and keeps it retryable once a provider is back.
+        from .models import TaskStatus
+
+        task.status = TaskStatus.BLOCKED
+        state.save_task(task)
+        state.log_event(project_id=task.project_id, task_id=task.task_id, event="no_available_adapter",
+                        detail=",".join(a.adapter_name for a in outcome.attempts) or "no candidates")
+    _evaluate(state, task, outcome, skill)
     return outcome
+
+
+def _evaluate(state, task, outcome, skill) -> None:
+    """v0.5 spec 09 gate 9: one EvaluationRecord per execution sequence."""
+    if state is None:
+        return
+    from .evaluation import record
+
+    results = [a.result for a in outcome.attempts if a.result is not None]
+    record(state, task, results, skill_id=skill.id if skill is not None else None)

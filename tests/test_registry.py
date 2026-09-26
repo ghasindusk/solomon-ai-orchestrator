@@ -3,6 +3,8 @@ import pathlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
+import pytest
+
 from solomon.registry import ProjectRegistry
 
 
@@ -10,17 +12,6 @@ def write_registry(tmp_path, projects_yaml: str) -> pathlib.Path:
     p = tmp_path / "projects.registry.yaml"
     p.write_text(projects_yaml, encoding="utf-8")
     return p
-
-
-# Note: the development repository's test suite includes a few
-# additional tests here that assert facts about that developer's real,
-# private project registry (project names, relationships). Those are
-# intentionally not included in this public release -- they would only
-# ever skip against the bundled example registry, and keeping them
-# would mean naming private projects in public source. See
-# 04_Config_Schemas/projects.registry.example.yaml for the schema they
-# exercise instead, and test_get_unknown_returns_none/
-# test_detect_from_path_* below for the portable equivalents.
 
 
 def test_see_also_defaults_to_empty_list(tmp_path):

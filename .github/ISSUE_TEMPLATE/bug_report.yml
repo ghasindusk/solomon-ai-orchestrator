@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before filing: please confirm this isn't a security issue (see SECURITY.md) and isn't one of the documented, intentional scope limits in README.md (Known limitations) / CHANGELOG.md.
+        Before filing: please confirm this isn't a security issue (see SECURITY.md) and isn't one of the documented, intentional scope limits in README.md / DECISIONS.md.
   - type: textarea
     id: what-happened
     attributes:

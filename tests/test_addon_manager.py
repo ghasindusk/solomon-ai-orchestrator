@@ -15,7 +15,7 @@ from solomon.addon_manager import (
 def make_manifest(**overrides) -> AddonManifest:
     base = dict(
         id="community.example-addon", name="Example", version="0.1.0",
-        addon_api="1", solomon_compatibility=">=0.4,<0.5", entrypoint="src/main.py",
+        addon_api="1", solomon_compatibility=">=0.4,<0.6", entrypoint="src/main.py",
     )
     base.update(overrides)
     return AddonManifest.from_dict(base)
@@ -86,7 +86,7 @@ def test_discover_addons_finds_valid_manifest(tmp_path):
         "name: My Addon\n"
         "version: 0.1.0\n"
         "addon_api: \"1\"\n"
-        "solomon_compatibility: \">=0.4,<0.5\"\n"
+        "solomon_compatibility: \">=0.4,<0.6\"\n"
         "entrypoint: src/main.py\n"
         "permissions:\n  - project.read\n",
         encoding="utf-8",

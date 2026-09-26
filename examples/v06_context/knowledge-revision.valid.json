@@ -1,0 +1,13 @@
+{
+  "schema_version": "0.6",
+  "entry_id": "entry-demo-1",
+  "revision_id": "revision-demo-1",
+  "project_id": "demo",
+  "kind": "idea",
+  "assertion": "Consider an offline manual intake pilot.",
+  "effective_at": null,
+  "valid_until": null,
+  "evidence_ids": ["evidence-demo-1"],
+  "predecessor_revision_id": null,
+  "state": "STAGED"
+}

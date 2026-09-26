@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:octavryn:v06:intake",
+  "title": "Core-validated IntakeEnvelope (proposed)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "intake_id", "project_id", "adapter_id", "adapter_version", "provider", "source_kind", "source_locator", "captured_at", "source_created_at", "content_sha256", "content_ref"],
+  "properties": {
+    "schema_version": {"const": "0.6"},
+    "intake_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "project_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "adapter_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "adapter_version": {"type": "string", "minLength": 1, "maxLength": 64},
+    "provider": {"type": "string", "minLength": 1, "maxLength": 128},
+    "source_kind": {"enum": ["conversation", "document", "file", "note", "email", "manual"]},
+    "source_locator": {"type": ["string", "null"], "maxLength": 2048},
+    "captured_at": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "source_created_at": {"type": ["string", "null"], "format": "date-time", "pattern": "Z$"},
+    "content_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "content_ref": {"type": "string", "pattern": "^blob:[a-zA-Z0-9_-]{1,128}$"}
+  }
+}

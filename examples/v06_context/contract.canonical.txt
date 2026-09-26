@@ -1,0 +1,1 @@
+{"contract_id":"contract-demo-1","criteria":[{"class":"artifact","criterion_id":"artifact-1","expectation":"A trusted attempt manifest binds blob:demo-1 and its SHA-256 to this attempt.","required":true,"verifier_id":"core.artifact","verifier_version":"1"}],"project_id":"demo","schema_version":"0.6","task_id":"task-demo-1","version":1}

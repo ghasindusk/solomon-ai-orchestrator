@@ -6,8 +6,8 @@
   `projects.registry.example.yaml` shows the three optional project
   fields (`crash_logs_path`/`mods_path`/`app_log_path`) in context.
 - **Addon manifest**: `addons/example-addon/solomon-addon.yaml` is a
-  real, validated example manifest -- run `python -m solomon.cli
+  real, validated example manifest -- run `python -m octavryn
   addons-list` to see it discovered and classified. Addon *execution*
-  isn't implemented yet (see CHANGELOG.md's Known limitations); this demonstrates the
+  isn't implemented yet (see `DECISIONS.md` D22); this demonstrates the
   manifest/permission model only.
 - **Basic walkthrough**: `basic_walkthrough.md` in this directory.

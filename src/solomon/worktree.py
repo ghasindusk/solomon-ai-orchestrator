@@ -75,7 +75,7 @@ class WorktreeManager:
             if switch.returncode != 0:
                 return GitResult(False, f"could not checkout {into_branch}: {switch.stderr.strip()[:300]}")
 
-        proc = self._git("merge", "--no-ff", branch, "-m", f"Merge {branch} (Solomon task {task_id})")
+        proc = self._git("merge", "--no-ff", branch, "-m", f"Merge {branch} (Octavryn task {task_id})")
         if proc.returncode != 0:
             self._git("merge", "--abort")
             return GitResult(False, f"merge failed, aborted: {(proc.stderr + proc.stdout).strip()[:500]}")

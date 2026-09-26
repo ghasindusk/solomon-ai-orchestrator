@@ -4,6 +4,8 @@ import pathlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
+import pytest
+
 import solomon.mcp_server as srv
 
 
@@ -16,12 +18,16 @@ def test_all_four_read_only_tools_are_registered():
     assert names == {"list_projects", "get_dashboard", "get_usage", "list_approvals"}
 
 
-# Note: the development repository's test suite includes an additional
-# test here (test_list_projects_returns_real_registry_entries) that
-# asserts a specific project_id is present in that developer's real
-# registry. Not included in this public release for the same reason as
-# tests/test_registry.py -- it would only ever skip against the bundled
-# example registry.
+def test_list_projects_returns_real_registry_entries():
+    """v0.4 D38: only meaningful against this developer's real registry
+    (gitignored) -- a fresh checkout gets the bootstrapped
+    .example.yaml instead (conftest.py), which has no
+    "solomon_ai_orchestrator" entry. Skip rather than fail there."""
+    projects = srv.list_projects()
+    assert isinstance(projects, list)
+    assert all({"project_id", "name", "status", "tags"} <= set(p.keys()) for p in projects)
+    if not any(p["project_id"] == "solomon_ai_orchestrator" for p in projects):
+        pytest.skip("real projects.registry.yaml not present in this environment")
 
 
 def test_get_usage_returns_provenance():

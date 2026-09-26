@@ -28,6 +28,6 @@ body:
     id: permissions
     attributes:
       label: Permissions needed (if an addon)
-      description: e.g. shell.execute, filesystem.outside_project, secrets.use -- see addons/README.md and src/solomon/addon_manager.py for the permission model. Note that addon *execution* isn't implemented yet (manifests are validated only, not run) -- see the Known limitations section of README.md.
+      description: e.g. shell.execute, filesystem.outside_project, secrets.use -- see addons/README.md and src/solomon/addon_manager.py for the permission model. Note that addon *execution* isn't implemented yet (manifests are validated only, not run) -- see DECISIONS.md D22.
     validations:
       required: false

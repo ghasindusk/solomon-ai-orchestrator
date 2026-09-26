@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Solomon v0.4 Gateway -- UserPromptSubmit hook.
 
-See hooks/README.md.
+See DECISIONS.md D17/D19/D25 and 10_v0.4_Migration/MIGRATION_STATUS.md.
 This is Phase 2's advisory-only gateway hook: it can only ADD context to
 what Claude sees, it can never block a prompt (Claude Code hooks have no
 genuine pre-decision interception point -- D17). It fails open
@@ -38,7 +38,9 @@ def _evaluate(prompt: str, cwd: str) -> dict | None:
     env = dict(os.environ)
     env["PYTHONPATH"] = _SOLOMON_HOME + r"\src"
     result = subprocess.run(
-        [sys.executable, "-m", "solomon.cli", "gateway-evaluate",
+        # v0.5: canonical `octavryn` module (no deprecation notice); the
+        # hook file keeps its name because user settings.json points at it.
+        [sys.executable, "-m", "octavryn", "gateway-evaluate",
          "--request", prompt, "--working-directory", cwd],
         cwd=_SOLOMON_HOME, env=env, capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=_TIMEOUT_SECONDS,
@@ -72,11 +74,12 @@ def main() -> int:
         project_id = decision["project_id"]
         signals = ", ".join(decision.get("matched_signals") or [])
         context_lines = [
-            "[Solomon v0.4 gateway -- advisory only, not binding]",
+            "[Octavryn SI v0.5 gateway (formerly Solomon) -- advisory only, not binding]",
             "This request looks like it matches registered project '" + project_id + "'",
             "(delegation signal(s): " + signals + ").",
             "Per this repo's CLAUDE.md routing rule, consider running it via",
-            "solomon route-and-run --role coder --project-id " + project_id + " --prompt \"<task>\"",
+            "octavryn route-and-run --role coder --project-id " + project_id + " --prompt \"<task>\"",
+            "(the `solomon` command is a deprecated alias of `octavryn` and still works)",
             "instead of editing directly, unless the user asked to bypass Solomon.",
         ]
         output = {

@@ -82,7 +82,7 @@ def test_independent_tasks_run_concurrently(tmp_path, monkeypatch):
     store = StateStore(db_path=tmp_path / "s.sqlite3")
     router = Router(state=store)
     _restrict(router, monkeypatch, ["claude_code"])
-    adapter = SleepyAdapter("claude_code", sleep_s=0.15)
+    adapter = SleepyAdapter("claude_code", sleep_s=0.3)
 
     items = [BatchItem(task=make_task(), prompt=f"job {i}") for i in range(4)]
     started = time.monotonic()
@@ -90,8 +90,10 @@ def test_independent_tasks_run_concurrently(tmp_path, monkeypatch):
     elapsed = time.monotonic() - started
 
     assert all(o.status == "completed" for o in outcomes)
-    # 4 x 0.15s serial would be >= 0.6s; concurrent should land well under that
-    assert elapsed < 0.5
+    # 4 x 0.3s serial would be >= 1.2s; concurrent lands near 0.3s. The 0.9s
+    # bound leaves room for per-task governance/state I/O on a loaded machine
+    # (the old 0.15s/0.5s pair failed 1 in 3 under load on 2026-09-26).
+    assert elapsed < 0.9
     assert adapter.execute_calls == 4
 
 

@@ -24,6 +24,17 @@ instead of being a hidden black box.
 Roles are provider-independent (FR-05); ROLE_CAPABILITY_MAP is a
 deliberately simple first-pass mapping from Solomon's role vocabulary
 (spec FR-05) to the capability tags in 04_Config_Schemas/agents.example.yaml.
+
+Octavryn SI v0.5 (roadmap R2/R3, spec 01 "Capability-first routing"):
+candidates are resolved as Task -> Skill -> required capabilities ->
+Capability Graph -> candidates, *before* any provider is scored. By
+default the role picks the core skill `role.<role>` (skill_packs/core),
+which requires the same capability ROLE_CAPABILITY_MAP names, so v0.4
+routing results are unchanged. ROLE_CAPABILITY_MAP is kept as the
+fallback when no skill registry is available. The graph gets DECLARED
+evidence from agents.yaml. Callers with an IntelligenceRegistry can pass
+a richer graph (historically verified / user-confirmed evidence), which
+feeds the `capability_evidence` score component.
 """
 
 from __future__ import annotations
@@ -34,6 +45,17 @@ from pathlib import Path
 import yaml
 
 from .adapters.base import AdapterHealth
+from .capability_graph import CapabilityGraph
+from .descriptors import (
+    EVIDENCE_RANK,
+    Availability,
+    CapabilityEvidence,
+    EvidenceState,
+    ExecutionCandidate,
+    IntelligenceDescriptor,
+    Locality,
+    SkillDescriptor,
+)
 from .models import Task
 from .state import StateStore
 from .token_budget import TokenBudgetManager
@@ -80,6 +102,9 @@ class Router:
         state: StateStore | None = None,
         usage_manager: UsageManager | None = None,
         token_budget_manager: TokenBudgetManager | None = None,
+        skill_registry=None,
+        capability_graph: CapabilityGraph | None = None,
+        project_repo_path: str | None = None,
     ):
         agents_path = Path(agents_config_path) if agents_config_path else _AGENTS_CONFIG_PATH
         weights_path_ = Path(weights_path) if weights_path else _WEIGHTS_CONFIG_PATH
@@ -101,16 +126,106 @@ class Router:
         self._usage_manager = usage_manager
         self._token_budget_manager = token_budget_manager
         self._gpu_busy_threshold = weights_raw.get("gpu_awareness", {}).get("busy_threshold_percent", 70)
+        self._graph = capability_graph or self._graph_from_config()
+        if skill_registry is None:
+            from .skills import SkillRegistry
 
-    def candidates_for_role(self, role: str) -> list[str]:
-        capability = ROLE_CAPABILITY_MAP.get(role)
-        if capability is None:
+            # D66: project-scope skills (<repo>/.octavryn/skills) are loaded
+            # when the caller routes for a project, so an explicit project
+            # skill resolves at execution time exactly as governance saw it.
+            skill_registry = SkillRegistry.default(
+                graph=self._graph, include_user=False, project_repo_path=project_repo_path
+            )
+        self._skills = skill_registry
+        self.last_resolution: list[ExecutionCandidate] = []
+
+    def _graph_from_config(self) -> CapabilityGraph:
+        """DECLARED-only graph built from agents.yaml. Availability is
+        UNKNOWN here because the live health check is scored separately
+        (the `availability` component), exactly as in v0.4."""
+        try:
+            graph = CapabilityGraph.load()
+        except FileNotFoundError:
+            graph = CapabilityGraph({})
+        for name, cfg in self._agents_config.items():
+            graph.add_intelligence(
+                IntelligenceDescriptor(
+                    id=name,
+                    display_name=name,
+                    adapter_type=str(cfg.get("type", "unknown")),
+                    locality=Locality.LOCAL if cfg.get("type") == "local" else Locality.UNKNOWN,
+                    capabilities=[
+                        CapabilityEvidence(c, EvidenceState.DECLARED, "config:agents.yaml")
+                        for c in (cfg.get("primary_capabilities") or [])
+                    ],
+                )
+            )
+        return graph
+
+    @property
+    def skill_registry(self):
+        return self._skills
+
+    @property
+    def capability_graph(self) -> CapabilityGraph:
+        return self._graph
+
+    def skill_for_task(self, task: Task, skill_id: str | None = None) -> SkillDescriptor | None:
+        if self._skills is None:
+            return None
+        if skill_id:
+            return self._skills.get(skill_id)
+        return self._skills.for_role(task.role)
+
+    def _required(self, task: Task, skill: SkillDescriptor | None) -> list[str]:
+        if skill is not None:
+            return [self._graph.normalize(c) for c in skill.required_capabilities]
+        capability = ROLE_CAPABILITY_MAP.get(task.role)
+        return [capability] if capability else []
+
+    def resolve_candidates(self, task: Task, skill: SkillDescriptor | None = None) -> list[ExecutionCandidate]:
+        """Capability-first candidate resolution. Returns every known
+        intelligence as an ExecutionCandidate, with the missing
+        capabilities or exclusion reason filled in, so callers can explain
+        why something was *not* chosen. Eligible ones have `.eligible`."""
+        if skill is None:
+            skill = self.skill_for_task(task)
+        required = self._required(task, skill)
+        if not required:
+            self.last_resolution = []
             return []
-        return [
-            name
-            for name, cfg in self._agents_config.items()
-            if capability in (cfg.get("primary_capabilities") or [])
-        ]
+        out: list[ExecutionCandidate] = []
+        for desc in sorted(self._graph.intelligences(), key=lambda d: d.id):
+            evidence = self._graph.evidence_for(desc.id)
+            cand = ExecutionCandidate(intelligence_id=desc.id, skill_id=skill.id if skill else None)
+            for cap in required:
+                if cap in evidence:
+                    cand.satisfied[cap] = evidence[cap].value
+                else:
+                    cand.missing.append(cap)
+            if desc.availability == Availability.ABSENT:
+                cand.excluded_reason = "absent (no longer discovered)"
+            elif skill is not None and skill.locality_constraint == "local" and desc.locality != Locality.LOCAL:
+                cand.excluded_reason = "skill requires local execution"
+            elif skill is not None and skill.locality_constraint == "cloud" and desc.locality == Locality.LOCAL:
+                cand.excluded_reason = "skill requires cloud execution"
+            elif skill is not None and skill.provider_constraints and desc.provider not in skill.provider_constraints:
+                cand.excluded_reason = f"provider '{desc.provider}' not in skill provider_constraints"
+            out.append(cand)
+        self.last_resolution = out
+        return out
+
+    def candidates_for_role(self, role: str, skill: SkillDescriptor | None = None) -> list[str]:
+        probe = Task(goal_id="-", project_id="-", type="-", role=role, definition_of_done=[])
+        return [c.intelligence_id for c in self.resolve_candidates(probe, skill=skill) if c.eligible]
+
+    def _evidence_component(self, adapter_name: str, task: Task, skill: SkillDescriptor | None) -> tuple[float, str]:
+        required = self._required(task, skill)
+        if not required:
+            return 0.0, "capability_evidence: no required capabilities resolved"
+        evidence = self._graph.evidence_for(adapter_name)
+        weakest = min((evidence.get(c, EvidenceState.UNKNOWN) for c in required), key=lambda s: EVIDENCE_RANK[s])
+        return EVIDENCE_RANK[weakest] / 4.0, f"capability_evidence: weakest evidence '{weakest.value}'"
 
     def score_adapter(
         self,
@@ -119,13 +234,21 @@ class Router:
         health: AdapterHealth | None = None,
         gpu_telemetry: dict | None = None,
         token_pressure: float | None = None,
+        skill: SkillDescriptor | None = None,
     ) -> AgentScore:
         components: dict[str, float] = {}
         notes: list[str] = []
 
-        capability = ROLE_CAPABILITY_MAP.get(task.role)
-        adapter_caps = (self._agents_config.get(adapter_name) or {}).get("primary_capabilities") or []
-        components["skill_match"] = 1.0 if capability and capability in adapter_caps else 0.0
+        # v0.5: skill_match = the capability graph says this adapter has
+        # every capability the task's skill requires. For core role skills
+        # this is the same answer as v0.4's role -> capability lookup.
+        if skill is None:
+            skill = self.skill_for_task(task)
+        required = self._required(task, skill)
+        evidence = self._graph.evidence_for(adapter_name)
+        components["skill_match"] = 1.0 if required and all(c in evidence for c in required) else 0.0
+        components["capability_evidence"], ev_note = self._evidence_component(adapter_name, task, skill)
+        notes.append(ev_note)
 
         if health is not None:
             components["availability"] = 1.0 if health.available else 0.0
@@ -231,9 +354,16 @@ class Router:
         task: Task,
         health_checks: dict[str, AdapterHealth] | None = None,
         gpu_telemetry: dict | None = None,
+        skill: SkillDescriptor | None = None,
     ) -> list[AgentScore]:
         health_checks = health_checks or {}
-        candidates = self.candidates_for_role(task.role)
+        # candidates_for_role stays the single candidate seam (tests and
+        # callers override it); an explicit skill is forwarded to it.
+        if skill is None:
+            candidates = self.candidates_for_role(task.role)
+            skill = self.skill_for_task(task)
+        else:
+            candidates = self.candidates_for_role(task.role, skill=skill)
 
         # D27 step 7: computed once per route() call (not per candidate --
         # every candidate shares the same project-scoped Token Budget
@@ -249,7 +379,8 @@ class Router:
 
         scores = [
             self.score_adapter(
-                name, task, health=health_checks.get(name), gpu_telemetry=gpu_telemetry, token_pressure=token_pressure
+                name, task, health=health_checks.get(name), gpu_telemetry=gpu_telemetry,
+                token_pressure=token_pressure, skill=skill,
             )
             for name in candidates
         ]

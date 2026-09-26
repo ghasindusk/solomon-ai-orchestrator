@@ -49,6 +49,7 @@ class BatchItem:
 class BatchOutcome:
     task_id: str
     status: str  # "completed" | "deferred_lock_conflict" | "no_candidate" | "worktree_failed"
+    #              | "waiting_approval" | "denied" (v0.5 R6 governance)
     result: TaskResult | None = None
     detail: str = ""
     worktree_path: str | None = None
@@ -64,6 +65,27 @@ def _run_one(
     worktrees_root: Path | None = None,
     gpu_telemetry: dict | None = None,
 ) -> BatchOutcome:
+    # v0.5 R6: the same gates as run-task/route-and-run, before any lock,
+    # worktree or adapter is touched.
+    from .governance import evaluate, request_approval
+
+    decision = evaluate(item.task, item.prompt, state, policy)
+    if decision.denied:
+        return BatchOutcome(task_id=item.task.task_id, status="denied", detail=decision.reason)
+    if decision.requires_approval:
+        if item.use_worktree:
+            return BatchOutcome(
+                task_id=item.task.task_id, status="waiting_approval",
+                detail=f"{decision.reason} -- worktree items are not queued for approval; "
+                       "rerun this item alone with route-and-run to get an approval request",
+            )
+        request_id = request_approval(state, item.task, decision, {
+            "kind": "route", "prompt": item.prompt, "timeout": item.timeout_s, "max_attempts": 1,
+        })
+        return BatchOutcome(
+            task_id=item.task.task_id, status="waiting_approval",
+            detail=f"approval request {request_id}: {decision.reason}",
+        )
     if item.touches:
         acquired = state.acquire_locks(item.task.task_id, item.task.project_id, item.touches)
         if not acquired:
@@ -102,7 +124,7 @@ def _run_one(
                 status="no_candidate",
                 detail=f"no adapter maps to role '{item.task.role}'",
             )
-        health_checks = {name: adapter_factory(name).health() for name in candidates}
+        health_checks = {name: _make(adapter_factory, name, item).health() for name in candidates}
         scores = router.route(item.task, health_checks=health_checks, gpu_telemetry=gpu_telemetry)
         available = [s for s in scores if health_checks[s.adapter_name].available]
         if not available:
@@ -111,16 +133,15 @@ def _run_one(
             )
 
         chosen_name = available[0].adapter_name
-        adapter = (
-            adapter_factory(chosen_name, cwd=str(worktree_path))
-            if worktree_path is not None
-            else adapter_factory(chosen_name)
-        )
+        adapter = _make(adapter_factory, chosen_name, item, cwd=str(worktree_path) if worktree_path is not None else None)
         result = adapter.execute(item.task, item.prompt, timeout_s=item.timeout_s)
         state.save_result(result)
         item.task.status = task_status_from_result_status(result.status)
         item.task.status = advance_after_result(item.task, state, policy)
         state.save_task(item.task)
+        from .evaluation import record as record_evaluation
+
+        record_evaluation(state, item.task, [result])
         return BatchOutcome(
             task_id=item.task.task_id,
             status="completed",
@@ -130,6 +151,15 @@ def _run_one(
     finally:
         if item.touches:
             state.release_locks(item.task.task_id)
+
+
+def _make(adapter_factory, name: str, item, cwd: str | None = None):
+    """D66: a factory marked `project_aware` gets the item's project_id,
+    so each item runs in its own project's repo_path under that project's
+    policy. Plain factories keep the v0.4 call shapes."""
+    if getattr(adapter_factory, "project_aware", False):
+        return adapter_factory(name, cwd=cwd, project_id=item.task.project_id)
+    return adapter_factory(name, cwd=cwd) if cwd is not None else adapter_factory(name)
 
 
 def run_batch(

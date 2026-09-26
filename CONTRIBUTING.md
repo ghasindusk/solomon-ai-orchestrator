@@ -16,22 +16,13 @@ process around anything that touches safety or policy behavior.
 ## Development setup
 
 ```bash
-pip install -e ".[dev]"
+pip install -r requirements.txt
 python -m pytest -q
 ```
 
 The suite is the source of truth for expected behavior; a change that
 regresses it will not be merged without a clear reason recorded for the
-change in the pull request description and CHANGELOG.md entry.
-
-### A note on internal references in source comments
-
-Some source comments cite design-decision IDs (e.g. `DECISIONS.md D27`)
-or internal files such as `STATUS.md` or `08_Discovery/...`. These point
-to the project's internal development records, which are not part of
-this public repository. The comments are kept for provenance; the
-behavior they describe is covered by the test suite and by
-`docs/specification/`.
+change (see `DECISIONS.md` for the format this project uses).
 
 ## Contribution boundary
 

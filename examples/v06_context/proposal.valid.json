@@ -1,0 +1,13 @@
+{
+  "schema_version": "0.6",
+  "proposal_id": "proposal-demo-1",
+  "project_id": "demo",
+  "kind": "idea",
+  "assertion": "Consider an offline manual intake pilot.",
+  "evidence_ids": [
+    "evidence-demo-1"
+  ],
+  "expected_revision": null,
+  "state": "PROPOSED",
+  "content_sha256": "a3a33b122ebc396aa552723bbeab280e0777c72582aab01b815aa7cd335edad4"
+}

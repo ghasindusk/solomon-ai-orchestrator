@@ -16,8 +16,17 @@ version: 0.3
 # split should shift.
 # This file, not the code, is the source of truth for the weights --
 # src/solomon/router.py loads it at runtime.
+#
+# v0.5 (Octavryn SI, spec 03 "Routing SHOULD prefer verified evidence"):
+# capability_evidence = strength of the evidence that the candidate really
+# has the skill's required capabilities (weakest across them): declared
+# 0.25, probed 0.5, historically verified 0.75, user-confirmed 1.0.
+# Took 0.05 from skill_match. Every routed candidate already has
+# skill_match 1.0 (capability-first resolution filters out the rest), so
+# skill_match was not telling candidates apart and the total stays 1.0.
 weights:
-  skill_match: 0.30
+  skill_match: 0.25
+  capability_evidence: 0.05
   historical_quality: 0.15
   role_fitness: 0.05
   project_experience: 0.10

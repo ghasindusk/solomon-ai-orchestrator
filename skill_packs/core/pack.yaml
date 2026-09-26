@@ -1,0 +1,18 @@
+# Octavryn SI v0.5 Core Skill Pack (spec 04, roadmap R3).
+# One skill per v0.4 role, so role-based routing is expressed as
+# "role -> skill -> required capabilities -> candidates" (capability-first)
+# while behaving exactly like v0.4's ROLE_CAPABILITY_MAP.
+schema_version: "0.5"
+id: octavryn_core
+version: 1
+name: Octavryn Core Skills
+skills:
+  - {id: role.architect, version: 1, name: Architecture, roles: [architect], requires: {capabilities: [architecture]}, verification: [result_recorded]}
+  - {id: role.planner, version: 1, name: Planning, roles: [planner], requires: {capabilities: [architecture]}, verification: [result_recorded]}
+  - {id: role.coder, version: 1, name: Coding, roles: [coder], requires: {capabilities: [coding]}, verification: [result_recorded]}
+  - {id: role.reviewer, version: 1, name: Review, roles: [reviewer], requires: {capabilities: [review]}, risk: LOW, verification: [result_recorded]}
+  - {id: role.tester, version: 1, name: Testing, roles: [tester], requires: {capabilities: [testing]}, verification: [result_recorded]}
+  - {id: role.researcher, version: 1, name: Research / analysis, roles: [researcher], requires: {capabilities: [analysis]}, risk: LOW, verification: [result_recorded]}
+  - {id: role.documenter, version: 1, name: Documentation, roles: [documenter], requires: {capabilities: [documentation]}, verification: [result_recorded]}
+  - {id: role.environment_operator, version: 1, name: Environment operations, roles: [environment_operator], requires: {capabilities: [environment_operations]}, risk: HIGH, verification: [result_recorded]}
+  - {id: role.knowledge_curator, version: 1, name: Knowledge curation, roles: [knowledge_curator], requires: {capabilities: [rag]}, locality_constraint: local, risk: LOW, verification: [result_recorded]}

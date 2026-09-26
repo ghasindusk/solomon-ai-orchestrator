@@ -1,10 +1,64 @@
 # Changelog
 
-All notable changes to Solomon AI Orchestrator are documented here. Format
-loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+All notable changes to Octavryn SI (formerly Solomon AI Orchestrator) are
+documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 This is a pre-1.0 alpha. Behavior, CLI flags, and schemas may change
 without a deprecation period until v1.0.0.
+
+## [0.6.0-alpha.1] - 2026-09-27
+
+Phase 1A preview. Provider adapters and automatic Source of Truth merge are
+not enabled by this release.
+
+### Added
+- Provider-independent, immutable context contracts for intake, evidence,
+  proposals, knowledge revisions, outcome contracts, verification reports,
+  and additive Memory migration manifests.
+- Project-scoped SQLite persistence with operation replay, proposal
+  compare-and-swap transitions, canonical JSON, and bundled JSON Schemas.
+- Adversarial fixtures and validation for project isolation, lifecycle,
+  schema drift, immutable records, and explicit `UNKNOWN` outcomes.
+
+### Security
+- Fail closed on unsupported schema-ledger versions, altered table DDL,
+  unexpected triggers, stored-key/record-ID mismatches, evidence-ID
+  mismatches, control characters, and attempts to shadow record metadata.
+- Preserve legacy Solomon compatibility; this preview performs no automatic
+  provider ingestion, approval merge, live credential use, or public endpoint.
+
+## [0.5.0-alpha] - unreleased
+
+Octavryn SI was originally released as Solomon AI Orchestrator v0.4.0-alpha.
+"SI" means Symbiotic Intelligence. No AGI or superintelligence claim is made.
+
+### Added
+- Provider-independent core: Intelligence Registry with read-only discovery,
+  Capability Graph with evidence states (declared / historically verified /
+  user-confirmed), capability-first routing through a Skill Registry with
+  scoped, versioned Skill Packs (install/uninstall, no permission escalation).
+- Formal adapter contract with explicit `Unsupported` results; an adapter
+  registry that keeps the core working when any named provider is absent.
+- Unified governance: run-task, route-and-run, run-batch, debate and
+  review-task all pass the same gates. Approvals are bound to the exact action
+  (hash), expire, are single-use, and carry the context a human needs.
+- Evaluation records for every execution.
+- Optional desktop surfaces (Claude Desktop / ChatGPT Desktop), detected
+  read-only and never granted execution authority.
+- Remote control foundation (in-process, no network listener): signed task
+  envelopes, replay/expiry/scope checks, worker state and durable checkpoints,
+  offline queue, revocation, kill switch.
+- Publication tooling: allowlisted candidate build with a fail-closed privacy scan.
+
+### Changed
+- `octavryn` is the canonical CLI and MCP server name. `solomon` keeps working
+  as a deprecated alias (stderr notice) through the v0.5 alpha line.
+- State store migrates copy-based to `state/octavryn.sqlite3`
+  (`octavryn migrate state --apply`, with backup, verification and rollback).
+- MCP `list_approvals` redacts credential-like strings.
+
+### Security
+- Wider secret detection (dash-containing `sk-` keys, `github_pat_`, `AIza`, `xox*`).
 
 ## [0.4.0-alpha] - 2026-09-24
 

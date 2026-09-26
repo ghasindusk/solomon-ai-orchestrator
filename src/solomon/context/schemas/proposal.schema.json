@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:octavryn:v06:proposal",
+  "title": "Pre-authorization Proposal (proposed)",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "proposal_id", "project_id", "kind", "assertion", "evidence_ids", "expected_revision", "state", "content_sha256"],
+  "properties": {
+    "schema_version": {"const": "0.6"},
+    "proposal_id": {"type": "string", "minLength": 1},
+    "project_id": {"type": "string", "minLength": 1},
+    "kind": {"enum": ["fact", "decision", "requirement", "constraint", "idea"]},
+    "assertion": {"type": "string", "minLength": 1, "maxLength": 16384},
+    "evidence_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "expected_revision": {"type": ["string", "null"], "minLength": 1},
+    "state": {"enum": ["PROPOSED", "QUARANTINED", "CONFLICTED", "STALE", "PENDING_APPROVAL", "REJECTED"]},
+    "content_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

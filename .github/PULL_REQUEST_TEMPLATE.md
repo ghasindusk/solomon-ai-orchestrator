@@ -17,4 +17,4 @@ contribution boundary).
 ## Checklist
 - [ ] No personal paths, secrets, or private project data introduced
       (see the `.example.yaml` pattern for anything config-shaped)
-- [ ] Rationale explained in the PR description if this is a non-obvious design choice
+- [ ] `DECISIONS.md` updated if this is a non-obvious design choice

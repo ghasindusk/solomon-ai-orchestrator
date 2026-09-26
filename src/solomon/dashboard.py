@@ -122,7 +122,7 @@ def build_dashboard(
 def render_dashboard(data: DashboardData) -> str:
     lines: list[str] = []
     lines.append("=" * 70)
-    lines.append("SOLOMON AI ORCHESTRATOR -- DASHBOARD")
+    lines.append("OCTAVRYN SI -- DASHBOARD (formerly SOLOMON AI ORCHESTRATOR)")
     lines.append("=" * 70)
 
     lines.append("\n-- Projects --")

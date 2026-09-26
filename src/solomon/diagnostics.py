@@ -79,6 +79,7 @@ class DiagnosticsReport:
     approvals: list[dict] | None = None
     recent_events: list[dict] = field(default_factory=list)
     gpu: dict | None = None
+    octavryn_v05: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -170,4 +171,60 @@ def build_diagnostics_report(
             entry["detail"] = redact_secrets(e["detail"])[0]
         report.recent_events.append(entry)
 
+    report.octavryn_v05 = _v05_section(store, include_sensitive)
     return report
+
+
+def _v05_section(store: StateStore, include_sensitive: bool) -> dict:
+    """v0.5 state for bug reports: versions, layout, registry and queue
+    *counts/states*. No paths, goals or prompts unless include_sensitive
+    (paths only). Each part degrades to an error marker instead of failing
+    the export."""
+    out: dict = {}
+    try:
+        from .addon_manager import OCTAVRYN_VERSION
+
+        out["version"] = OCTAVRYN_VERSION
+    except Exception as exc:  # noqa: BLE001
+        out["version"] = f"unknown ({type(exc).__name__})"
+    try:
+        from .migration import status
+
+        m = status()
+        out["state_layout"] = {"migrated": m["migrated"], "legacy_env_vars": m["legacy_env_vars"]}
+        if include_sensitive:
+            out["state_layout"]["active_db"] = m["active_db"]
+    except Exception as exc:  # noqa: BLE001
+        out["state_layout"] = f"unknown ({type(exc).__name__})"
+    try:
+        from .intelligence_registry import IntelligenceRegistry
+
+        out["intelligences"] = [
+            {"id": d.id, "availability": d.availability.value, "locality": d.locality.value,
+             "capabilities": len(d.capabilities)}
+            for d in IntelligenceRegistry(state=store).load_persisted()
+        ]
+    except Exception as exc:  # noqa: BLE001
+        out["intelligences"] = f"unknown ({type(exc).__name__})"
+    try:
+        from .surfaces import detect_surfaces
+
+        out["surfaces"] = {s.id: s.availability.value for s in detect_surfaces()}
+    except Exception as exc:  # noqa: BLE001
+        out["surfaces"] = f"unknown ({type(exc).__name__})"
+    try:
+        from .v05_status import remote_queue_summary
+
+        q = remote_queue_summary(store)
+        out["remote_queue"] = {"requests_by_status": q["requests_by_status"], "workers": len(q["workers"])}
+    except Exception as exc:  # noqa: BLE001
+        out["remote_queue"] = f"unknown ({type(exc).__name__})"
+    try:
+        from .skills import SkillRegistry
+
+        reg = SkillRegistry.default()
+        out["skills"] = {"resolved": len(reg.all()),
+                         "conflicts": [{"kind": c.kind, "skill_id": c.skill_id} for c in reg.conflicts]}
+    except Exception as exc:  # noqa: BLE001
+        out["skills"] = f"unknown ({type(exc).__name__})"
+    return out

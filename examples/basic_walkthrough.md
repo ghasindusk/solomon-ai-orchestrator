@@ -7,15 +7,15 @@ project in `projects.registry.yaml`.
 ## 1. Confirm your project is registered
 
 ```bash
-python -m solomon.cli project-list
+python -m octavryn project-list
 ```
 
-## 2. See which adapters Solomon would consider for a role, and why
+## 2. See which adapters Octavryn would consider for a role, and why
 
 Dry-run only -- no adapter is actually invoked.
 
 ```bash
-python -m solomon.cli route --role coder --project-id your_project
+python -m octavryn route --role coder --project-id your_project
 ```
 
 Each candidate prints its weighted score components (`skill_match`,
@@ -27,7 +27,7 @@ data for yet shows up as a documented neutral default, not a guess.
 ## 3. Run a real task end-to-end, with routing + fallback
 
 ```bash
-python -m solomon.cli route-and-run --role coder --project-id your_project \
+python -m octavryn route-and-run --role coder --project-id your_project \
   --prompt "describe the task here"
 ```
 
@@ -36,23 +36,23 @@ your project's Token Budget has hit its hard-stop threshold, this may
 instead print an approval request ID. Decide it explicitly:
 
 ```bash
-python -m solomon.cli approvals list
-python -m solomon.cli approvals decide <request-id> --approve
-python -m solomon.cli execute-approved <request-id>
+python -m octavryn approvals list
+python -m octavryn approvals decide <request-id> --approve
+python -m octavryn execute-approved <request-id>
 ```
 
 ## 4. Check on things
 
 ```bash
-python -m solomon.cli dashboard --project-id your_project
-python -m solomon.cli usage --project-id your_project
-python -m solomon.cli learning-report
+python -m octavryn dashboard --project-id your_project
+python -m octavryn usage --project-id your_project
+python -m octavryn learning-report
 ```
 
 ## 5. Export a redacted diagnostics bundle (e.g. to attach to a bug report)
 
 ```bash
-python -m solomon.cli diagnostics-export --project-id your_project
+python -m octavryn diagnostics-export --project-id your_project
 ```
 
 By default this **omits** prompts, approval reasons, project file

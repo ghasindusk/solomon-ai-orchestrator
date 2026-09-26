@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:octavryn:v06:memory-migration-manifest",
+  "title": "MemoryMigrationManifest (proposed)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "migration_id", "source_entity", "target_entity", "snapshot_sha256", "source_observation_count", "source_incoming_relation_count", "source_outgoing_relation_count", "completed_steps", "status"],
+  "properties": {
+    "schema_version": {"const": "0.6"},
+    "migration_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "source_entity": {"const": "Solomon-AI-Orchestrator"},
+    "target_entity": {"const": "Octavryn-SI"},
+    "snapshot_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_observation_count": {"type": "integer", "minimum": 0},
+    "source_incoming_relation_count": {"type": "integer", "minimum": 0},
+    "source_outgoing_relation_count": {"type": "integer", "minimum": 0},
+    "completed_steps": {"type": "array", "uniqueItems": true, "items": {"enum": ["SNAPSHOT", "TARGET_CREATED", "OBSERVATIONS_COPIED", "RELATIONS_COPIED", "ALIAS_LINKED", "READBACK_VERIFIED"]}},
+    "status": {"enum": ["DRY_RUN", "IN_PROGRESS", "VERIFIED", "FAILED", "ROLLED_BACK"]}
+  }
+}

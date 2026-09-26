@@ -1,0 +1,12 @@
+{
+  "schema_version": "0.6",
+  "migration_id": "memory-migration-demo-1",
+  "source_entity": "Solomon-AI-Orchestrator",
+  "target_entity": "Octavryn-SI",
+  "snapshot_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source_observation_count": 0,
+  "source_incoming_relation_count": 0,
+  "source_outgoing_relation_count": 0,
+  "completed_steps": ["SNAPSHOT"],
+  "status": "DRY_RUN"
+}

@@ -35,6 +35,12 @@ class ProjectEntry:
     mods_path: str | None = None  # e.g. a Minecraft instance's mods/ dir
     app_log_path: str | None = None  # e.g. a Flutter .flutter_run.log file
     build_command: str | None = None  # shell command, run in repo_path, for the "build_passes" DoD criterion
+    # D78: skills declaring the `artifacts_in_prompt` verification get one
+    # `artifact:<path>` DoD criterion per repo-relative path in the prompt that
+    # matches artifact_pattern; artifact_verify_command ({path} placeholder,
+    # same D56 trust boundary as build_command) must then succeed on it.
+    artifact_pattern: str | None = None
+    artifact_verify_command: str | None = None
 
 
 class ProjectRegistry:
@@ -61,6 +67,8 @@ class ProjectRegistry:
                 mods_path=data.get("mods_path"),
                 app_log_path=data.get("app_log_path"),
                 build_command=data.get("build_command"),
+                artifact_pattern=data.get("artifact_pattern"),
+                artifact_verify_command=data.get("artifact_verify_command"),
             )
 
     def list_projects(self, include_superseded: bool = False) -> list[ProjectEntry]:

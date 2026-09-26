@@ -1,0 +1,21 @@
+{
+  "schema_version": "0.6",
+  "report_id": "report-demo-1",
+  "project_id": "demo",
+  "task_id": "task-demo-1",
+  "attempt_id": "attempt-demo-1",
+  "contract_id": "contract-demo-1",
+  "contract_digest": "2d1910770bd24bc9cc142169a19563913252d603d90c08652793563c12b37ba4",
+  "status": "PASS",
+  "verified_at": "2026-09-26T05:01:00Z",
+  "checks": [
+    {
+      "criterion_id": "artifact-1",
+      "status": "UNKNOWN",
+      "verifier_id": "core.artifact",
+      "verifier_version": "1",
+      "evidence_ids": [],
+      "reason": "Missing manifest; top-level PASS is inconsistent."
+    }
+  ]
+}

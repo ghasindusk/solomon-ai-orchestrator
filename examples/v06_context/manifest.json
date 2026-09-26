@@ -1,0 +1,104 @@
+[
+  {
+    "file": "intake.valid.json",
+    "structural": true,
+    "schema": "intake.schema.json"
+  },
+  {
+    "file": "intake.future-provider.valid.json",
+    "structural": true,
+    "schema": "intake.schema.json"
+  },
+  {
+    "file": "intake.forged-approval.invalid.json",
+    "structural": false,
+    "schema": "intake.schema.json"
+  },
+  {
+    "file": "intake.path.invalid.json",
+    "structural": false,
+    "schema": "intake.schema.json"
+  },
+  {
+    "file": "contract.valid.json",
+    "structural": true,
+    "schema": "outcome-contract.schema.json"
+  },
+  {
+    "file": "contract.empty.invalid.json",
+    "structural": false,
+    "schema": "outcome-contract.schema.json"
+  },
+  {
+    "file": "contract.optional-only.invalid.json",
+    "structural": false,
+    "schema": "outcome-contract.schema.json"
+  },
+  {
+    "file": "report.unknown.valid.json",
+    "structural": true,
+    "semantic": true,
+    "schema": "verification-report.schema.json"
+  },
+  {
+    "file": "report.fail.valid.json",
+    "structural": true,
+    "semantic": true,
+    "schema": "verification-report.schema.json"
+  },
+  {
+    "file": "report.pass.valid.json",
+    "structural": true,
+    "semantic": true,
+    "schema": "verification-report.schema.json"
+  },
+  {
+    "file": "report.pass-no-evidence.invalid.json",
+    "structural": false,
+    "schema": "verification-report.schema.json"
+  },
+  {
+    "file": "report.aggregate.semantic-invalid.json",
+    "structural": true,
+    "semantic": false,
+    "schema": "verification-report.schema.json"
+  },
+  {
+    "file": "proposal.valid.json",
+    "structural": true,
+    "schema": "proposal.schema.json"
+  },
+  {
+    "file": "proposal.self-accepted.invalid.json",
+    "structural": false,
+    "schema": "proposal.schema.json"
+  },
+  {
+    "file": "evidence.valid.json",
+    "structural": true,
+    "semantic": true,
+    "schema": "evidence-reference.schema.json"
+  },
+  {
+    "file": "evidence.cross-project.semantic-invalid.json",
+    "structural": true,
+    "semantic": false,
+    "schema": "evidence-reference.schema.json"
+  },
+  {
+    "file": "knowledge-revision.valid.json",
+    "structural": true,
+    "semantic": true,
+    "schema": "knowledge-revision.schema.json"
+  },
+  {
+    "file": "knowledge-revision.no-evidence.invalid.json",
+    "structural": false,
+    "schema": "knowledge-revision.schema.json"
+  },
+  {
+    "file": "memory-migration.dry-run.valid.json",
+    "structural": true,
+    "schema": "memory-migration-manifest.schema.json"
+  }
+]

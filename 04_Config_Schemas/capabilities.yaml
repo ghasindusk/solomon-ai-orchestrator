@@ -1,0 +1,50 @@
+# Octavryn SI v0.5 Capability vocabulary (spec 03, roadmap R2).
+# Canonical ids route tasks; aliases normalize the names integrations and
+# skills use. `implies` adds a derived capability at DECLARED evidence at
+# most. An implication never upgrades evidence, so an agent that is
+# historically verified at `refactoring` is only *declared* at `coding`.
+# The v0.4 capability tags (agents.example.yaml) are all kept as canonical
+# ids so existing routing keeps its meaning.
+schema_version: "0.5"
+capabilities:
+  reasoning: {description: "General multi-step reasoning"}
+  planning: {description: "Task decomposition and planning", aliases: [plan]}
+  architecture: {description: "Software/system architecture design", implies: [planning]}
+  analysis: {description: "Analysis and investigation", aliases: [research_analysis]}
+  research: {description: "Information gathering / research"}
+  coding: {description: "Writing and modifying code", aliases: [code, programming, java_coding, python_coding]}
+  debugging: {description: "Diagnosing and fixing defects"}
+  refactoring: {description: "Behaviour-preserving restructuring"}
+  repository_analysis: {description: "Reading and navigating a code repository", aliases: [repo_analysis]}
+  testing: {description: "Writing and running tests", aliases: [tests]}
+  review: {description: "Reviewing another participant's output", aliases: [code_review]}
+  documentation: {description: "Writing documentation", aliases: [docs]}
+  git: {description: "Version-control operations"}
+  document_analysis: {description: "Reading and extracting from documents"}
+  vision: {description: "Image understanding"}
+  knowledge: {description: "Knowledge-base access"}
+  rag: {description: "Retrieval-augmented generation", aliases: [local_rag]}
+  summarization: {description: "Summarizing text", aliases: [summarize]}
+  classification: {description: "Labeling / classifying input"}
+  context_compression: {description: "Compressing context for other participants"}
+  translation: {description: "Natural-language translation"}
+  tool_use: {description: "Calling external tools"}
+  mcp_use: {description: "Using MCP servers", implies: [tool_use]}
+  agentic_tasks: {description: "Autonomous multi-step tool-using work", implies: [tool_use]}
+  environment_operations: {description: "Operating the local environment (shell, installs)"}
+  multi_step_work: {description: "Long multi-step work", implies: [planning]}
+  # D68: data/evaluation capabilities, so a project's skills can ask for
+  # what they need instead of a generic `analysis`. Agentic CLIs that can
+  # run local tools declare them in agents.example.yaml (DECLARED only;
+  # HISTORICALLY_VERIFIED needs completed tasks).
+  data_processing: {description: "Processing/validating structured data with local tools", aliases: [market_data_processing], implies: [analysis]}
+  backtesting: {description: "Running deterministic historical simulations (backtests, walk-forward)", implies: [analysis]}
+  simulation: {description: "Running simulations / paper sessions against local simulators", aliases: [paper_simulation], implies: [analysis]}
+  evaluation: {description: "Evaluating results, metrics and audit reports", implies: [analysis]}
+  status_reporting: {description: "Reporting read-only status of a system", aliases: [status], implies: [analysis]}
+  # D68: sensitive external-effect capabilities. No adapter declares them;
+  # they exist so project policies can deny them by canonical id.
+  broker_execution: {description: "Connecting to a broker / submitting or cancelling orders", aliases: [order_submission, broker_connect]}
+  credential_management: {description: "Creating, reading or rotating credentials / API keys", aliases: [credentials]}
+  fund_transfer: {description: "Moving money (deposits, withdrawals, transfers)", aliases: [payments]}
+  live_trading: {description: "Enabling or operating live (real-money) trading", aliases: [live]}

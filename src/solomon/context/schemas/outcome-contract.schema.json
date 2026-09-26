@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:octavryn:v06:outcome-contract",
+  "title": "Frozen OutcomeContract (proposed)",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "contract_id", "project_id", "task_id", "version", "digest", "criteria"],
+  "properties": {
+    "schema_version": {"const": "0.6"},
+    "contract_id": {"type": "string", "minLength": 1},
+    "project_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "version": {"type": "integer", "minimum": 1},
+    "digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "criteria": {
+      "type": "array", "minItems": 1, "maxItems": 100,
+      "contains": {"type": "object", "required": ["required"], "properties": {"required": {"const": true}}},
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["criterion_id", "class", "required", "verifier_id", "verifier_version", "expectation"],
+        "properties": {
+          "criterion_id": {"type": "string", "minLength": 1},
+          "class": {"enum": ["code_test", "artifact", "backtest", "simulation_paper", "data_validation", "research", "status_inspection", "evaluation", "structured_data"]},
+          "required": {"type": "boolean"},
+          "verifier_id": {"type": "string", "minLength": 1},
+          "verifier_version": {"type": "string", "minLength": 1},
+          "expectation": {"type": "string", "minLength": 1, "maxLength": 4096}
+        }
+      }
+    }
+  }
+}

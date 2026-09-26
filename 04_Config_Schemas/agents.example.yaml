@@ -6,15 +6,17 @@ agents:
     obsidian_knowledge_layer: true
   claude_code:
     type: cli
-    primary_capabilities: [architecture, analysis, review, documentation, coding]
+    primary_capabilities: [architecture, analysis, review, documentation, coding,
+                           research, data_processing, backtesting, simulation, evaluation, status_reporting]
   codex:
     type: cli
-    primary_capabilities: [coding, debugging, refactoring, testing, review]
+    primary_capabilities: [coding, debugging, refactoring, testing, review,
+                           data_processing, backtesting, simulation, evaluation, status_reporting]
   antigravity:
     type: cli
     # Driven via the `agy` CLI's non-interactive print mode (agy -p ... --output-format json),
     # NOT the antigravity-ide GUI binary, which only launches an async chat window with no way
-    # to capture a result (found during Phase 0 environment discovery).
+    # to capture a result. See 08_Discovery/PHASE0_DISCOVERY_REPORT.md.
     primary_capabilities: [agentic_tasks, environment_operations, multi_step_work, coding]
 routing:
   roles_are_provider_independent: true

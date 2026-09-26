@@ -47,7 +47,11 @@ KNOWN_EXTENSION_POINTS = {
     "telemetry_providers",
 }
 
-SOLOMON_VERSION = "0.4.0-dev"
+# v0.5 R7: canonical name OCTAVRYN_VERSION; SOLOMON_VERSION kept as an
+# alias for code that imported it. An addon declaring ">=0.4,<0.5" is now
+# (correctly) quarantined as incompatible -- fail closed, not a silent load.
+OCTAVRYN_VERSION = "0.5.0-dev"
+SOLOMON_VERSION = OCTAVRYN_VERSION
 
 
 class AddonState(str, Enum):
@@ -110,7 +114,9 @@ class AddonManifest:
             name=data.get("name", ""),
             version=str(data.get("version", "")),
             addon_api=str(data.get("addon_api", "")),
-            solomon_compatibility=data.get("solomon_compatibility", ""),
+            # v0.5: `octavryn_compatibility` is the canonical key; the v0.4
+            # key is still read so existing addons keep validating.
+            solomon_compatibility=data.get("octavryn_compatibility") or data.get("solomon_compatibility", ""),
             entrypoint=data.get("entrypoint", ""),
             permissions=list(data.get("permissions") or []),
             provides=dict(data.get("provides") or {}),
@@ -151,7 +157,7 @@ def validate_manifest(manifest: AddonManifest) -> AddonRecord:
             errors.append(
                 "solomon_compatibility '" + manifest.solomon_compatibility + "' does not match "
                 "running version " + SOLOMON_VERSION + " -- fail closed "
-                "(Addon_SDK_Specification.md: Solomon must fail closed for incompatible addon APIs)"
+                "(Addon_SDK_Specification.md: Octavryn must fail closed for incompatible addon APIs)"
             )
     else:
         errors.append("missing required field: solomon_compatibility")
@@ -174,7 +180,12 @@ def discover_addons(addons_root: Path | str | None = None) -> list[AddonRecord]:
     if not root.exists():
         return records
 
-    for manifest_path in sorted(root.glob("*/solomon-addon.yaml")):
+    # v0.5: octavryn-addon.yaml is canonical; solomon-addon.yaml still found.
+    # If one addon dir has both, only the canonical one is read.
+    manifest_paths = sorted(root.glob("*/octavryn-addon.yaml"))
+    canonical_dirs = {p.parent for p in manifest_paths}
+    manifest_paths += sorted(p for p in root.glob("*/solomon-addon.yaml") if p.parent not in canonical_dirs)
+    for manifest_path in manifest_paths:
         try:
             raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
             if not isinstance(raw, dict):
