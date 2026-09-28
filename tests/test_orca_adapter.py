@@ -7,7 +7,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from solomon.adapters.orca_adapter import OrcaAdapter
-from solomon.adapters.registry import known_adapter_names, load_adapter
+import solomon.adapters.registry as registry
+from solomon.adapters.registry import known_adapter_names
 from solomon.models import Task
 
 
@@ -77,9 +78,53 @@ def success_sequence(outcome="succeeded"):
     return _run
 
 
-def test_registry_exposes_orca():
-    assert "orca" in known_adapter_names()
-    assert isinstance(load_adapter("orca"), OrcaAdapter)
+def test_orca_is_execution_backend_not_routing_identity():
+    assert "orca" not in known_adapter_names()
+
+
+def test_project_can_execute_selected_codex_through_orca(monkeypatch):
+    class Policy:
+        execution_profile = {
+            "codex": {
+                "execution_backend": "orca",
+                "orca": {"worktree": "current"},
+            }
+        }
+
+        @staticmethod
+        def adapter_allowed(name):
+            return True
+
+    monkeypatch.setattr("solomon.project_policy.policy_for", lambda project_id: Policy())
+    monkeypatch.setattr(registry, "project_repo_path", lambda project_id: "/repo")
+
+    adapter = registry.load_for_project("codex", "p-orca")
+    assert isinstance(adapter, OrcaAdapter)
+    assert adapter.agent == "codex"
+    assert adapter.logical_agent == "codex"
+    assert adapter.cwd == "/repo"
+
+
+def test_project_can_execute_selected_claude_through_orca(monkeypatch):
+    class Policy:
+        execution_profile = {
+            "claude_code": {
+                "execution_backend": "orca",
+                "orca": {"agent": "claude", "worktree": "current"},
+            }
+        }
+
+        @staticmethod
+        def adapter_allowed(name):
+            return True
+
+    monkeypatch.setattr("solomon.project_policy.policy_for", lambda project_id: Policy())
+    monkeypatch.setattr(registry, "project_repo_path", lambda project_id: None)
+
+    adapter = registry.load_for_project("claude_code", "p-orca")
+    assert isinstance(adapter, OrcaAdapter)
+    assert adapter.agent == "claude"
+    assert adapter.logical_agent == "claude_code"
 
 
 def test_orca_health_missing_binary():
@@ -271,10 +316,13 @@ def test_orca_profile_accepts_agent_but_rejects_unimplemented_placement():
 
 
 def test_invalid_orca_project_profile_fails_closed(monkeypatch):
-    import solomon.adapters.registry as registry
-
     class Policy:
-        execution_profile = {"orca": {"worktree": "new-child"}}
+        execution_profile = {
+            "codex": {
+                "execution_backend": "orca",
+                "orca": {"worktree": "new-child"},
+            }
+        }
 
         @staticmethod
         def adapter_allowed(name):
@@ -283,7 +331,42 @@ def test_invalid_orca_project_profile_fails_closed(monkeypatch):
     monkeypatch.setattr("solomon.project_policy.policy_for", lambda project_id: Policy())
     monkeypatch.setattr(registry, "project_repo_path", lambda project_id: None)
 
-    adapter = registry.load_for_project("orca", "p-orca")
+    adapter = registry.load_for_project("codex", "p-orca")
     health = adapter.health()
     assert not health.available
-    assert "invalid execution_profile" in health.detail
+    assert "invalid Orca execution_profile" in health.detail
+
+
+def test_orca_backend_rejects_direct_only_provider_settings(monkeypatch):
+    class Policy:
+        execution_profile = {
+            "codex": {
+                "execution_backend": "orca",
+                "sandbox": "read-only",
+                "orca": {"worktree": "current"},
+            }
+        }
+
+        @staticmethod
+        def adapter_allowed(name):
+            return True
+
+    monkeypatch.setattr("solomon.project_policy.policy_for", lambda project_id: Policy())
+    monkeypatch.setattr(registry, "project_repo_path", lambda project_id: None)
+
+    adapter = registry.load_for_project("codex", "p-orca")
+    health = adapter.health()
+    assert not health.available
+    assert "cannot be guaranteed through Orca" in health.detail
+
+
+def test_orca_result_preserves_logical_provider_identity():
+    adapter = OrcaAdapter(logical_agent="codex")
+    with patch("solomon.adapters.orca_adapter.shutil.which", return_value="/usr/bin/orca"), patch(
+        "solomon.adapters.orca_adapter.subprocess.run",
+        side_effect=success_sequence("succeeded"),
+    ):
+        result = adapter.execute(make_task(), "implement feature", timeout_s=60)
+
+    assert result.status == "RESULT_RECEIVED"
+    assert result.agent == "codex"
