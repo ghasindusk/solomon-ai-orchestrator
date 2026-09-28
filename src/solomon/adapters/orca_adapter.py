@@ -18,6 +18,7 @@ The first integration slice is intentionally conservative:
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -99,17 +100,15 @@ class OrcaAdapter(AgentAdapter):
             self.worktree = worktree
 
     def health(self) -> AdapterHealth:
-        executable = shutil.which(self.binary)
+        executable = self._resolve_executable()
         if not executable:
-            return AdapterHealth(False, f"'{self.binary}' not found on PATH")
-        if executable.lower().endswith((".cmd", ".bat")):
             return AdapterHealth(
                 False,
-                "Orca resolved to a cmd/bat shim; configure the native Orca executable "
-                "so Octavryn can invoke it without a command shell",
+                f"'{self.binary}' not found on PATH, or only a cmd/bat shim was found "
+                "without a sibling native Orca executable",
             )
 
-        result = self._invoke(["status"], timeout_s=20)
+        result = self._invoke(["status"], timeout_s=20, executable=executable)
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
             return AdapterHealth(False, f"orca status failed: {detail[:400]}")
@@ -473,9 +472,31 @@ class OrcaAdapter(AgentAdapter):
                 returncode=0 if status == "RESULT_RECEIVED" else 1,
             )
 
-    def _invoke(self, args: list[str], timeout_s: float) -> _CommandResult:
-        executable = shutil.which(self.binary) or self.binary
-        cmd = [executable, *args, "--json"]
+    def _resolve_executable(self) -> str | None:
+        executable = shutil.which(self.binary)
+        if not executable:
+            return None
+        if executable.lower().endswith((".cmd", ".bat")):
+            # Packaged Orca on Windows can expose both a shell wrapper and a
+            # native resources/bin/orca.exe. Prefer the native sibling so task
+            # prompts never traverse cmd.exe parsing.
+            native = os.path.splitext(executable)[0] + ".exe"
+            if os.path.isfile(native):
+                return native
+            return None
+        return executable
+
+    def _invoke(
+        self,
+        args: list[str],
+        timeout_s: float,
+        *,
+        executable: str | None = None,
+    ) -> _CommandResult:
+        resolved = executable or self._resolve_executable()
+        if not resolved:
+            return _CommandResult(127, "", f"'{self.binary}' native executable unavailable", None)
+        cmd = [resolved, *args, "--json"]
         try:
             proc = subprocess.run(
                 cmd,
