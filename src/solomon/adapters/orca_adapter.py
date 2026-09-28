@@ -71,10 +71,12 @@ class OrcaAdapter(AgentAdapter):
         cwd: str | None = None,
         agent: str = "codex",
         worktree: str = "current",
+        logical_agent: str | None = None,
     ):
         self.binary = binary
         self.cwd = cwd
         self.agent = agent
+        self.logical_agent = logical_agent or agent
         self.worktree = worktree
 
     def apply_profile(self, profile: dict) -> None:
@@ -337,7 +339,7 @@ class OrcaAdapter(AgentAdapter):
                 task_id=task.task_id,
                 status=status,
                 summary=summary[:2000],
-                agent=self.name,
+                agent=self.logical_agent,
                 started_at=started,
                 changed_files=changed_files,
                 evidence=[
@@ -495,7 +497,7 @@ class OrcaAdapter(AgentAdapter):
             task_id=task.task_id,
             status="FAILED",
             summary=summary[:2000],
-            agent=self.name,
+            agent=self.logical_agent,
             started_at=started,
             uncertainties=uncertainties,
             evidence=evidence or [],
