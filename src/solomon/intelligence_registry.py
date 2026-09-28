@@ -188,7 +188,7 @@ class IntelligenceRegistry:
 # -- tool discovery (read-only) -----------------------------------------
 
 DEFAULT_TOOL_NAMES = ["git", "python", "node", "npm", "java", "gradle", "flutter", "gh", "docker",
-                      "claude", "codex", "agy", "ollama"]
+                      "claude", "codex", "agy", "ollama", "orca"]
 
 
 def discover_cli_tools(names: list[str] | None = None) -> list[ToolDescriptor]:
