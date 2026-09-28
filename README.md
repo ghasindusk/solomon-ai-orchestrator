@@ -66,9 +66,10 @@ Known, intentional scope limits (not bugs):
 - Python 3.11+
 - See `requirements.txt` for Python dependencies (`pyyaml`, `mcp`).
 - At least one supported AI CLI adapter available on your machine
-  (Claude Code, Codex, Antigravity, Orca, or a local Ollama install) --
-  Octavryn orchestrates existing tools, it doesn't replace them. Orca is an
-  optional execution-plane integration; direct adapters remain supported.
+  (Claude Code, Codex, Antigravity, or a local Ollama install) --
+  Octavryn orchestrates existing tools, it doesn't replace them.
+- Optional: an Orca runtime when a project chooses Orca as the supervised
+  execution backend for a supported logical adapter.
 
 ## Getting started
 
@@ -117,11 +118,12 @@ v0.6 can use **Orca** as an optional supervised execution plane while Octavryn
 remains the control plane. Octavryn keeps ownership of routing, memory/RAG,
 governance, approvals, capability evidence, and Definition-of-Done
 verification; Orca owns supervised agent/worktree lifecycle for delegated
-tasks.
+tasks. Orca is **not** added as a routing identity: Octavryn can still select
+Codex or Claude Code, then execute that selected intelligence through Orca.
 
 The first integration slice is deliberately conservative: it uses the current
-Orca-managed worktree, accepts a configurable Orca agent, and only returns
-RESULT_RECEIVED after a matching worker_done task/dispatch receipt. Questions,
+Orca-managed worktree and only returns RESULT_RECEIVED after a matching
+worker_done task/dispatch receipt. Questions,
 escalations, unknown lifecycle state, and mismatched IDs fail closed rather
 than being inferred as success.
 
