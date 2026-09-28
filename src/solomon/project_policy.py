@@ -117,12 +117,11 @@ class ProjectPolicy:
         for adapter, profile in self.execution_profile.items():
             if adapter not in KNOWN_PROFILE_KEYS:
                 raise PolicyError(f"{self.project_id}: execution_profile for unknown adapter '{adapter}'")
-            extra = set(profile or {}) - KNOWN_PROFILE_KEYS[adapter]
-            if extra:
-                raise PolicyError(f"{self.project_id}: execution_profile.{adapter} has unknown keys {sorted(extra)}")
-        for adapter, profile in self.execution_profile.items():
             if not isinstance(profile, dict):
                 raise PolicyError(f"{self.project_id}: execution_profile.{adapter} must be a mapping")
+            extra = set(profile) - KNOWN_PROFILE_KEYS[adapter]
+            if extra:
+                raise PolicyError(f"{self.project_id}: execution_profile.{adapter} has unknown keys {sorted(extra)}")
             backend = profile.get("execution_backend", "direct")
             if backend not in _EXECUTION_BACKENDS:
                 raise PolicyError(
