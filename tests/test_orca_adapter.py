@@ -147,6 +147,20 @@ def test_orca_health_missing_binary():
     assert "not found" in health.detail
 
 
+def test_orca_prefers_native_windows_executable_over_cmd_shim():
+    adapter = OrcaAdapter()
+    with patch(
+        "solomon.adapters.orca_adapter.shutil.which",
+        return_value=r"C:\\Program Files\\Orca\\resources\\bin\\orca.cmd",
+    ), patch(
+        "solomon.adapters.orca_adapter.os.path.isfile",
+        return_value=True,
+    ):
+        resolved = adapter._resolve_executable()
+
+    assert resolved == r"C:\\Program Files\\Orca\\resources\\bin\\orca.exe"
+
+
 def test_orca_success_requires_matching_worker_done_and_releases_before_ack():
     adapter = OrcaAdapter(cwd="/repo", agent="codex")
     calls = []
