@@ -39,15 +39,24 @@ codex even when Orca owns the supervised worker lifecycle.
 A delegated execution follows this supervised sequence:
 
 1. orca status --json
-2. orca orchestration run-create --objective ... --json
-3. orca orchestration worker-start --spec ... --worktree current --agent ... --json
-4. orca orchestration check --wait --types worker_done,escalation,question ... --json
-5. Validate worker_done.taskId **and** worker_done.dispatchId against the
+2. Create a dedicated Orca coordinator terminal in the active worktree and
+   retain its authoritative terminal handle.
+3. orca orchestration run-create --objective ... --from <coordinator> --json
+4. Read the authoritative Run ID from the receipt.
+5. orca orchestration worker-start --spec ... --worktree current --agent ...
+   --run <run_id> --from <coordinator> --json
+6. Consume with orca orchestration check --terminal <coordinator>
+   --run <run_id> --wait --types worker_done,escalation,question ... --json
+7. Validate worker_done.taskId **and** worker_done.dispatchId against the
    authoritative worker-start receipt.
-6. After a settled worker, call worker-release, then acknowledge the delivery.
-7. Convert the worker outcome into an Octavryn TaskResult.
-8. Octavryn still performs its own Definition-of-Done verification before a
-   task can become COMPLETE.
+8. After a settled worker, call worker-release. A failed or unverified release
+   leaves the Delivery unacknowledged.
+9. Only after confirmed release, acknowledge the Delivery through the same
+   coordinator terminal and Run. Close Octavryn's coordinator terminal only
+   after a confirmed ACK.
+10. Convert the worker outcome into an Octavryn TaskResult.
+11. Octavryn still performs its own Definition-of-Done verification before a
+    task can become COMPLETE.
 
 worker_done is execution evidence, not final Octavryn completion.
 
@@ -63,8 +72,10 @@ The adapter intentionally fails closed:
   may have residual resources or uncertain authority.
 - Wait-window expiry -> do not stop or retry the worker. Report the dispatch as
   unverifiable and preserve its IDs for inspection.
-- A cleanup/ack failure is recorded as uncertainty; it does not rewrite the
-  worker's task outcome.
+- A failed/unverified worker-release is a recovery condition: the Delivery is
+  not acknowledged and the coordinator terminal is retained.
+- An ACK failure is recorded as uncertainty and the coordinator terminal is
+  retained so the Delivery can be replayed/repaired.
 - The adapter invokes Orca directly with shell=False. Arbitrary task prompts
   never pass through a command shell.
 
@@ -79,9 +90,11 @@ The first slice supports this project execution profile:
           worktree: current
 
 The calling project's directory therefore needs to resolve to an Orca-managed
-current worktree. Automatic repo registration and creation of top-level/child
-Orca worktrees are deliberately deferred until placement/recovery semantics
-are covered by dedicated tests.
+current worktree. Octavryn creates its own short-lived coordinator shell
+terminal in that worktree because the Python process is outside Orca's
+interactive terminal context. Automatic repo registration and creation of
+top-level/child Orca worktrees are deliberately deferred until
+placement/recovery semantics are covered by dedicated tests.
 
 This avoids silently duplicating Octavryn's current WorktreeManager during the
 migration.
@@ -112,7 +125,8 @@ migration.
 - Keep Orca out of the intelligence/routing registry.
 - Let per-project policy wrap selected Codex or Claude Code execution in Orca.
 - Preserve the selected logical provider name in TaskResult and history.
-- Add lifecycle/fail-closed unit tests.
+- Add lifecycle/fail-closed unit tests, including explicit Run/coordinator
+  scoping and release-before-ACK ordering.
 - Document control-plane/execution-plane boundary.
 - Keep every existing execution path intact.
 
