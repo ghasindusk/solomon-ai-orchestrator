@@ -149,5 +149,8 @@ def load_for_project(name: str, project_id: str | None, cwd: str | None = None) 
         if profile and apply is None:
             return MissingAdapter(name, "project policy sets an execution_profile this adapter cannot enforce")
         if apply is not None:
-            apply(profile)
+            try:
+                apply(profile)
+            except Exception as exc:  # noqa: BLE001 - invalid provider profile must fail closed
+                return MissingAdapter(name, f"invalid execution_profile: {type(exc).__name__}: {exc}")
     return adapter
