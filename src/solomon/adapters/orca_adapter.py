@@ -135,6 +135,38 @@ class OrcaAdapter(AgentAdapter):
                 ["unavailable: orca runtime"],
             )
 
+        # Octavryn is an external coordinator process, not an interactive
+        # command typed inside an Orca terminal. Give it an explicit Orca
+        # coordinator identity so Run binding and inbox consumption never
+        # depend on whichever terminal happens to be active in the UI.
+        coordinator = self._invoke(
+            [
+                "terminal",
+                "create",
+                "--worktree",
+                "active",
+                "--title",
+                f"Octavryn coordinator {task.task_id}",
+            ],
+            timeout_s=self._remaining(deadline, cap=30),
+        )
+        if coordinator.returncode != 0 or self._payload_failed(coordinator.payload):
+            return self._command_failure(task, started, "coordinator terminal create", coordinator)
+
+        coordinator_handle = self._deep_value(
+            coordinator.payload, {"handle", "terminalHandle", "terminal_handle"}
+        )
+        if not coordinator_handle:
+            return self._failed(
+                task,
+                started,
+                "Orca terminal create succeeded without an authoritative coordinator handle; "
+                "Octavryn will not create an unscoped orchestration Run.",
+                ["unverifiable: missing Orca coordinator terminal handle"],
+                raw=coordinator.stdout + coordinator.stderr,
+            )
+        coordinator_handle = str(coordinator_handle)
+
         spec = self._task_spec(task, prompt)
 
         run = self._invoke(
@@ -143,11 +175,38 @@ class OrcaAdapter(AgentAdapter):
                 "run-create",
                 "--objective",
                 f"Octavryn {task.task_id}: {task.type}",
+                "--from",
+                coordinator_handle,
             ],
             timeout_s=self._remaining(deadline, cap=30),
         )
         if run.returncode != 0 or self._payload_failed(run.payload):
-            return self._command_failure(task, started, "run-create", run)
+            # Once run-create was attempted, mutation may be ambiguous.
+            # Retain the coordinator terminal for inspection rather than
+            # closing it and potentially orphaning a Run that actually exists.
+            return self._command_failure(
+                task,
+                started,
+                "run-create",
+                run,
+                extra_uncertainty="unverifiable: coordinator terminal retained after Run creation failure",
+                evidence=[f"orca_coordinator_handle={coordinator_handle}"],
+            )
+
+        run_id = self._prefixed_id(run.payload, "run_") or self._deep_value(
+            run.payload, {"runId", "run_id"}
+        )
+        if not run_id:
+            return self._failed(
+                task,
+                started,
+                "Orca run-create did not return an authoritative Run ID; Octavryn will not "
+                "start a worker against an implicitly scoped Run.",
+                ["unverifiable: missing Orca Run ID"],
+                evidence=[f"orca_coordinator_handle={coordinator_handle}"],
+                raw=run.stdout + run.stderr,
+            )
+        run_id = str(run_id)
 
         worker = self._invoke(
             [
@@ -159,6 +218,10 @@ class OrcaAdapter(AgentAdapter):
                 self.worktree,
                 "--agent",
                 self.agent,
+                "--run",
+                run_id,
+                "--from",
+                coordinator_handle,
             ],
             timeout_s=self._remaining(deadline, cap=90),
         )
@@ -171,6 +234,10 @@ class OrcaAdapter(AgentAdapter):
                 "worker-start",
                 worker,
                 extra_uncertainty="unverifiable: worker-start failed; no automatic retry was attempted",
+                evidence=[
+                    f"orca_run_id={run_id}",
+                    f"orca_coordinator_handle={coordinator_handle}",
+                ],
             )
 
         orca_task_id = self._deep_value(worker.payload, {"taskId", "task_id"})
@@ -182,25 +249,35 @@ class OrcaAdapter(AgentAdapter):
                 "Orca worker-start did not return both authoritative taskId and dispatchId; "
                 "Octavryn will not infer lifecycle authority.",
                 ["unverifiable: missing Orca lifecycle identifiers"],
+                evidence=[
+                    f"orca_run_id={run_id}",
+                    f"orca_coordinator_handle={coordinator_handle}",
+                ],
                 raw=worker.stdout + worker.stderr,
             )
 
-        raw_parts = [run.stdout, worker.stdout]
+        base_evidence = [
+            f"orca_run_id={run_id}",
+            f"orca_coordinator_handle={coordinator_handle}",
+            f"orca_task_id={orca_task_id}",
+            f"orca_dispatch_id={dispatch_id}",
+        ]
+        raw_parts = [coordinator.stdout, run.stdout, worker.stdout]
         empty_waits = 0
         last_inspection: str | None = None
 
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                evidence = [f"orca_task_id={orca_task_id}", f"orca_dispatch_id={dispatch_id}"]
+                evidence = list(base_evidence)
                 if last_inspection:
                     evidence.append(f"orca_worker_inspection={last_inspection[:1200]}")
                 return self._failed(
                     task,
                     started,
                     "Octavryn's wait window ended without authoritative Orca worker_done. "
-                    "The Orca worker was not stopped or retried and may still be running; "
-                    f"inspect dispatch {dispatch_id} before retrying.",
+                    "The Orca worker and coordinator terminal were not stopped or retried and "
+                    f"may still be live; inspect Run {run_id} / dispatch {dispatch_id} before retrying.",
                     ["unverifiable: Orca completion was not observed"],
                     evidence=evidence,
                     raw="\n".join(raw_parts),
@@ -211,6 +288,10 @@ class OrcaAdapter(AgentAdapter):
                 [
                     "orchestration",
                     "check",
+                    "--terminal",
+                    coordinator_handle,
+                    "--run",
+                    run_id,
                     "--wait",
                     "--types",
                     "worker_done,escalation,question",
@@ -228,9 +309,10 @@ class OrcaAdapter(AgentAdapter):
                     "orchestration check",
                     checked,
                     extra_uncertainty=(
-                        f"unverifiable: dispatch {dispatch_id} was not stopped or retried"
+                        f"unverifiable: dispatch {dispatch_id} and coordinator terminal "
+                        f"{coordinator_handle} were retained"
                     ),
-                    evidence=[f"orca_task_id={orca_task_id}", f"orca_dispatch_id={dispatch_id}"],
+                    evidence=list(base_evidence),
                     raw="\n".join(raw_parts),
                 )
 
@@ -238,8 +320,17 @@ class OrcaAdapter(AgentAdapter):
             if not messages:
                 empty_waits += 1
                 if empty_waits == 3:
+                    # The current Orca contract recommends an explicit Run
+                    # enumeration after repeated empty waits. It is inspection
+                    # only: no timeout authorizes stop/retry/release.
                     inspection = self._invoke(
-                        ["orchestration", "worker-show", "--dispatch", str(dispatch_id)],
+                        [
+                            "orchestration",
+                            "worker-list",
+                            "--run",
+                            run_id,
+                            "--include-remote",
+                        ],
                         timeout_s=self._remaining(deadline, cap=30),
                     )
                     last_inspection = inspection.stdout.strip() or inspection.stderr.strip()
@@ -264,10 +355,7 @@ class OrcaAdapter(AgentAdapter):
                             "Orca delivered worker_done with lifecycle IDs that do not match "
                             "the authoritative worker-start receipt; delivery was left unacknowledged.",
                             ["unverifiable: mismatched Orca lifecycle identifiers"],
-                            evidence=[
-                                f"expected_task_id={orca_task_id}",
-                                f"expected_dispatch_id={dispatch_id}",
-                            ],
+                            evidence=list(base_evidence),
                             raw="\n".join(raw_parts),
                         )
                 elif msg_type in {"question", "escalation"}:
@@ -280,9 +368,10 @@ class OrcaAdapter(AgentAdapter):
                     task,
                     started,
                     f"Orca worker requires coordinator action ({msg_type}): {str(subject)[:900]}. "
-                    "The delivery was left unacknowledged so it can be handled explicitly.",
+                    "The delivery and coordinator terminal were retained so the action can be "
+                    "handled explicitly.",
                     [f"orca_{msg_type}_requires_action"],
-                    evidence=[f"orca_task_id={orca_task_id}", f"orca_dispatch_id={dispatch_id}"],
+                    evidence=list(base_evidence),
                     raw="\n".join(raw_parts),
                 )
 
@@ -296,7 +385,7 @@ class OrcaAdapter(AgentAdapter):
                     "Orca returned a delivery without a matching worker_done; "
                     "Octavryn left it unacknowledged rather than guessing.",
                     ["unverifiable: unrecognized Orca delivery"],
-                    evidence=[f"orca_task_id={orca_task_id}", f"orca_dispatch_id={dispatch_id}"],
+                    evidence=list(base_evidence),
                     raw="\n".join(raw_parts),
                 )
 
@@ -307,21 +396,40 @@ class OrcaAdapter(AgentAdapter):
             files = self._deep_value(matching_done, {"filesModified", "files_modified"})
             changed_files = [str(x) for x in files] if isinstance(files, list) else []
 
-            # Settlement authorizes cleanup. Release before acknowledging the
-            # delivery, as required by Orca's supervised lifecycle.
+            # Settlement authorizes cleanup, but cleanup must itself be proven
+            # before the Delivery is acknowledged. Otherwise the evidence that
+            # tells a coordinator what still needs release could be consumed.
             release = self._invoke(
                 ["orchestration", "worker-release", "--dispatch", str(dispatch_id)],
                 timeout_s=self._remaining(deadline, cap=30),
             )
             raw_parts.append(release.stdout)
-            cleanup_uncertainties: list[str] = []
             if release.returncode != 0 or self._payload_failed(release.payload):
-                cleanup_uncertainties.append("orca_cleanup_failed: worker-release did not confirm cleanup")
+                return self._failed(
+                    task,
+                    started,
+                    "Orca worker_done was authoritative, but worker-release did not confirm "
+                    "cleanup. The Delivery was intentionally left unacknowledged and the "
+                    "coordinator terminal was retained for recovery.",
+                    ["orca_cleanup_unverified: worker-release did not confirm cleanup"],
+                    evidence=[*base_evidence, f"orca_outcome={outcome or 'unknown'}"],
+                    raw="\n".join(raw_parts),
+                )
 
+            cleanup_uncertainties: list[str] = []
             delivery_id = self._deep_value(checked.payload, {"deliveryId", "delivery_id"})
             if delivery_id:
                 ack = self._invoke(
-                    ["orchestration", "check", "--ack", str(delivery_id)],
+                    [
+                        "orchestration",
+                        "check",
+                        "--terminal",
+                        coordinator_handle,
+                        "--run",
+                        run_id,
+                        "--ack",
+                        str(delivery_id),
+                    ],
                     timeout_s=self._remaining(deadline, cap=30),
                 )
                 raw_parts.append(ack.stdout)
@@ -329,6 +437,20 @@ class OrcaAdapter(AgentAdapter):
                     cleanup_uncertainties.append("orca_ack_failed: delivery may replay")
             else:
                 cleanup_uncertainties.append("orca_ack_skipped: delivery id missing")
+
+            # Only close Octavryn's coordinator terminal after a confirmed ACK.
+            # If ACK failed or no delivery id was returned, retaining the
+            # terminal preserves an identity from which replay can be repaired.
+            if not cleanup_uncertainties:
+                close = self._invoke(
+                    ["terminal", "close", "--terminal", coordinator_handle],
+                    timeout_s=self._remaining(deadline, cap=30),
+                )
+                raw_parts.append(close.stdout)
+                if close.returncode != 0 or self._payload_failed(close.payload):
+                    cleanup_uncertainties.append(
+                        "orca_coordinator_cleanup_failed: coordinator terminal may remain"
+                    )
 
             status = "RESULT_RECEIVED" if outcome == "succeeded" else "FAILED"
             if outcome not in {"succeeded", "failed"}:
@@ -343,8 +465,7 @@ class OrcaAdapter(AgentAdapter):
                 started_at=started,
                 changed_files=changed_files,
                 evidence=[
-                    f"orca_task_id={orca_task_id}",
-                    f"orca_dispatch_id={dispatch_id}",
+                    *base_evidence,
                     f"orca_outcome={outcome or 'unknown'}",
                 ],
                 uncertainties=cleanup_uncertainties,
