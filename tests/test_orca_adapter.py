@@ -268,3 +268,22 @@ def test_orca_profile_accepts_agent_but_rejects_unimplemented_placement():
         assert "current" in str(exc)
     else:
         raise AssertionError("non-current placement should fail closed in the pilot")
+
+
+def test_invalid_orca_project_profile_fails_closed(monkeypatch):
+    import solomon.adapters.registry as registry
+
+    class Policy:
+        execution_profile = {"orca": {"worktree": "new-child"}}
+
+        @staticmethod
+        def adapter_allowed(name):
+            return True
+
+    monkeypatch.setattr("solomon.project_policy.policy_for", lambda project_id: Policy())
+    monkeypatch.setattr(registry, "project_repo_path", lambda project_id: None)
+
+    adapter = registry.load_for_project("orca", "p-orca")
+    health = adapter.health()
+    assert not health.available
+    assert "invalid execution_profile" in health.detail
