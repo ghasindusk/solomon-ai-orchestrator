@@ -537,6 +537,17 @@ class OrcaAdapter(AgentAdapter):
         return None
 
     @classmethod
+    def _prefixed_id(cls, payload: object, prefix: str) -> str | None:
+        """Find an identifier by value shape when Orca moves fields between
+        JSON envelope versions. Exact lifecycle IDs remain authoritative; this
+        only makes envelope nesting tolerant."""
+        for item in cls._walk_dicts(payload):
+            for value in item.values():
+                if isinstance(value, str) and value.startswith(prefix):
+                    return value
+        return None
+
+    @classmethod
     def _messages(cls, payload: object) -> Iterable[dict[str, Any]]:
         seen: set[int] = set()
         for item in cls._walk_dicts(payload):
