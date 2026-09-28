@@ -450,6 +450,18 @@ def test_orca_result_preserves_logical_provider_identity():
     assert result.agent == "codex"
 
 
+def test_project_policy_non_mapping_profile_fails_closed():
+    try:
+        ProjectPolicy.from_dict(
+            "p-orca",
+            {"execution_profile": {"codex": 7}},
+        )
+    except PolicyError as exc:
+        assert "must be a mapping" in str(exc)
+    else:
+        raise AssertionError("malformed execution profile must fail closed as PolicyError")
+
+
 def test_project_policy_accepts_provider_preserving_orca_backend():
     pol = ProjectPolicy.from_dict(
         "p-orca",
