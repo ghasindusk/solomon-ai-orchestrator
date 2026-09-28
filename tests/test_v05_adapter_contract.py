@@ -49,7 +49,7 @@ def test_execute_unreachable_server_fails_cleanly():
 
 
 def test_cli_adapters_report_unsplit_operations_as_unsupported():
-    for name in ("claude_code", "codex", "antigravity"):
+    for name in ("claude_code", "codex", "antigravity", "orca"):
         a = load_adapter(name)
         assert is_unsupported(a.prepare_request(task(), "x"))
         assert is_unsupported(a.probe_capability("coding"))
