@@ -32,6 +32,7 @@ _BUILTINS: dict[str, tuple[str, str, bool]] = {
     "codex": (".codex_adapter", "CodexAdapter", True),
     "localai_ollama": (".ollama_adapter", "OllamaAdapter", False),
     "antigravity": (".antigravity_adapter", "AntigravityAdapter", True),
+    "orca": (".orca_adapter", "OrcaAdapter", True),
 }
 
 _CUSTOM: dict[str, Callable[..., AgentAdapter]] = {}
