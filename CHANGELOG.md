@@ -6,6 +6,22 @@ documented here. Format loosely follows [Keep a Changelog](https://keepachangelo
 This is a pre-1.0 alpha. Behavior, CLI flags, and schemas may change
 without a deprecation period until v1.0.0.
 
+## [Unreleased]
+
+### Added
+- Optional Orca supervised execution-plane adapter. Octavryn remains the
+  control plane for routing, memory/RAG, governance, approval and final
+  Definition-of-Done verification.
+- Orca lifecycle tests for authoritative task/dispatch IDs, worker-reported
+  failure, questions/escalations, cleanup ordering and no blind retry.
+
+### Security
+- Orca worker output is accepted only from a matching worker_done taskId and
+  dispatchId. Unknown lifecycle state fails closed and is never promoted to
+  task completion.
+- Invalid adapter execution profiles now degrade to an unavailable adapter
+  instead of crashing provider loading.
+
 ## [0.6.0-alpha.1] - 2026-09-27
 
 Phase 1A preview. Provider adapters and automatic Source of Truth merge are
