@@ -5,7 +5,7 @@ Status: **v0.6 pilot / feature branch**
 ## Decision
 
 Octavryn remains the **control plane**. Orca is integrated as a managed
-**execution plane** through the existing provider-independent adapter contract.
+**execution plane** beneath the existing provider-independent adapter contract.
 
 This is an integration, not a replacement:
 
@@ -13,9 +13,9 @@ This is an integration, not a replacement:
   evidence, governance, approval gates, Definition-of-Done verification,
   durable task state, usage policy, and specialist-system selection.
 - Orca owns supervised agent process/worktree execution and the authoritative
-  worker lifecycle for tasks delegated through the Orca adapter.
-- Claude Code, Codex, Antigravity, and local Ollama remain valid direct
-  Octavryn adapters. Orca is an additional route, not a mandatory dependency.
+  worker lifecycle for tasks delegated through the Orca execution backend.
+- Claude Code, Codex, Antigravity, and local Ollama remain the routing
+  identities. Orca is not a new intelligence candidate and is not mandatory.
 
 ## Why this boundary
 
@@ -31,8 +31,10 @@ verification.
 
 ## Pilot execution contract
 
-The v0.6 pilot implements solomon.adapters.orca_adapter.OrcaAdapter and
-registers it as adapter name orca.
+The v0.6 pilot implements solomon.adapters.orca_adapter.OrcaAdapter as an
+execution backend selected by per-project policy. The logical adapter identity
+is preserved: if Octavryn routes a task to codex, TaskResult.agent remains
+codex even when Orca owns the supervised worker lifecycle.
 
 A delegated execution follows this supervised sequence:
 
@@ -71,9 +73,10 @@ The adapter intentionally fails closed:
 The first slice supports this project execution profile:
 
     execution_profile:
-      orca:
-        agent: codex
-        worktree: current
+      codex:
+        execution_backend: orca
+        orca:
+          worktree: current
 
 The calling project's directory therefore needs to resolve to an Orca-managed
 current worktree. Automatic repo registration and creation of top-level/child
@@ -103,10 +106,12 @@ migration.
 
 ## Migration plan
 
-### Slice A - supervised adapter (this branch)
+### Slice A - supervised execution backend (this branch)
 
-- Add OrcaAdapter.
-- Register orca in the adapter registry.
+- Add OrcaAdapter as a backend implementation.
+- Keep Orca out of the intelligence/routing registry.
+- Let per-project policy wrap selected Codex or Claude Code execution in Orca.
+- Preserve the selected logical provider name in TaskResult and history.
 - Add lifecycle/fail-closed unit tests.
 - Document control-plane/execution-plane boundary.
 - Keep every existing execution path intact.
