@@ -157,6 +157,29 @@ Only after real-world acceptance and regression coverage:
 - Do **not** remove routing, governance, approval, memory/RAG, verification,
   audit, or specialist-tool orchestration.
 
+## Acceptance gate before merge
+
+The Draft PR must stay unmerged until these checks pass on the real Octavryn
+machine:
+
+1. Run the existing full Python regression suite.
+2. Confirm `orca status --json` reports a ready/reachable runtime and load the
+   version-matched orchestration guide with `orca skills get orchestration`.
+3. On Windows, confirm Octavryn resolves the native Orca executable. If PATH
+   resolves to `orca.cmd`, the adapter prefers a sibling `orca.exe` and
+   refuses the shim when no native sibling can be proven.
+4. Enable the Orca backend for one disposable Codex task in an Orca-managed
+   current worktree and verify the recorded Run ID, coordinator handle,
+   taskId, dispatchId, changed-files evidence, worker release, Delivery ACK,
+   and final Octavryn Definition-of-Done verification.
+5. Repeat a controlled worker failure and confirm Octavryn does not retry the
+   uncertain Dispatch or mark it successful.
+6. Exercise a worker question/escalation and confirm the Delivery and
+   coordinator identity are retained for explicit handling.
+7. Test Claude Code through Orca only after the Codex path passes. If Claude
+   terminal readiness fails, keep Claude on its direct adapter until the
+   Orca/Claude readiness condition is corrected.
+
 ## External contract used
 
 The integration follows Orca's current supervised orchestration guidance:
