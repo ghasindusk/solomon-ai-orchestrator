@@ -10,6 +10,7 @@ from solomon.adapters.orca_adapter import OrcaAdapter
 import solomon.adapters.registry as registry
 from solomon.adapters.registry import known_adapter_names
 from solomon.models import Task
+from solomon.project_policy import PolicyError, ProjectPolicy
 
 
 def make_task() -> Task:
@@ -370,3 +371,58 @@ def test_orca_result_preserves_logical_provider_identity():
 
     assert result.status == "RESULT_RECEIVED"
     assert result.agent == "codex"
+
+
+def test_project_policy_accepts_provider_preserving_orca_backend():
+    pol = ProjectPolicy.from_dict(
+        "p-orca",
+        {
+            "allowed_adapters": ["codex"],
+            "execution_profile": {
+                "codex": {
+                    "execution_backend": "orca",
+                    "orca": {"agent": "codex", "worktree": "current"},
+                }
+            },
+        },
+    )
+    assert pol.execution_profile["codex"]["execution_backend"] == "orca"
+
+
+def test_project_policy_rejects_orca_with_direct_only_settings():
+    try:
+        ProjectPolicy.from_dict(
+            "p-orca",
+            {
+                "execution_profile": {
+                    "codex": {
+                        "execution_backend": "orca",
+                        "sandbox": "read-only",
+                        "orca": {"worktree": "current"},
+                    }
+                }
+            },
+        )
+    except PolicyError as exc:
+        assert "cannot combine Orca" in str(exc)
+    else:
+        raise AssertionError("Orca backend must not pretend to enforce direct Codex sandbox settings")
+
+
+def test_project_policy_rejects_orca_agent_identity_drift():
+    try:
+        ProjectPolicy.from_dict(
+            "p-orca",
+            {
+                "execution_profile": {
+                    "claude_code": {
+                        "execution_backend": "orca",
+                        "orca": {"agent": "codex", "worktree": "current"},
+                    }
+                }
+            },
+        )
+    except PolicyError as exc:
+        assert "Orca agent must remain" in str(exc)
+    else:
+        raise AssertionError("Orca backend must preserve the logical routing identity")
