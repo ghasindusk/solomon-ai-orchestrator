@@ -125,14 +125,15 @@ def project_repo_path(project_id: str | None) -> str | None:
 
 
 def load_for_project(name: str, project_id: str | None, cwd: str | None = None) -> AgentAdapter:
-    """The adapter as it should run for `project_id` (D66/D67):
-    - cwd defaults to the project's registered repo_path. Before D66 the
-      CLI-based adapters ran in whatever directory octavryn was started
-      from, so claude_code/antigravity worked outside the project;
-    - an adapter the project policy does not allow comes back as an
-      unavailable MissingAdapter (routing skips it, execute() fails);
-    - the policy's execution_profile for this adapter is applied.
-    An invalid policy file makes every adapter unavailable (fail closed)."""
+    """The adapter as it should run for project_id (D66/D67).
+
+    v0.6 adds an execution-backend split without changing routing identity:
+    a project may select execution_backend: orca for a supported logical
+    intelligence (initially codex or claude_code). Router/governance still
+    see the logical adapter name; Orca is only the supervised execution
+    substrate. This prevents the execution plane from becoming a second
+    provider router.
+    """
     from ..project_policy import PolicyError, policy_for
 
     try:
@@ -141,12 +142,70 @@ def load_for_project(name: str, project_id: str | None, cwd: str | None = None) 
         return MissingAdapter(name, f"project policy invalid: {exc}")
     if pol is not None and not pol.adapter_allowed(name):
         return MissingAdapter(name, f"not allowed by the project policy for '{project_id}'")
-    adapter = load_adapter(name, cwd=cwd if cwd is not None else project_repo_path(project_id))
+
+    resolved_cwd = cwd if cwd is not None else project_repo_path(project_id)
+    profile = (pol.execution_profile.get(name) or {}) if pol is not None else {}
+    if not isinstance(profile, dict):
+        return MissingAdapter(name, "invalid execution_profile: expected a mapping")
+
+    backend = profile.get("execution_backend", "direct")
+    if backend not in {"direct", "orca"}:
+        return MissingAdapter(name, f"invalid execution_backend: {backend!r}")
+
+    if backend == "orca":
+        # Keep Octavryn's selected intelligence authoritative. Orca agent
+        # identifiers are transport/runtime names, not new routing candidates.
+        orca_agents = {
+            "codex": "codex",
+            "claude_code": "claude",
+        }
+        orca_agent = orca_agents.get(name)
+        if orca_agent is None:
+            return MissingAdapter(
+                name,
+                "Orca execution backend pilot supports only codex and claude_code",
+            )
+
+        extra = sorted(set(profile) - {"execution_backend", "orca"})
+        if extra:
+            return MissingAdapter(
+                name,
+                "invalid execution_profile for Orca backend; direct-adapter settings "
+                f"cannot be guaranteed through Orca: {', '.join(extra)}",
+            )
+
+        orca_profile = profile.get("orca") or {}
+        if not isinstance(orca_profile, dict):
+            return MissingAdapter(name, "invalid execution_profile.orca: expected a mapping")
+        configured_agent = orca_profile.get("agent")
+        if configured_agent is not None and configured_agent != orca_agent:
+            return MissingAdapter(
+                name,
+                f"Orca agent {configured_agent!r} would change routing identity; expected {orca_agent!r}",
+            )
+
+        try:
+            from .orca_adapter import OrcaAdapter
+
+            adapter = OrcaAdapter(
+                cwd=resolved_cwd,
+                agent=orca_agent,
+                logical_agent=name,
+            )
+            adapter.apply_profile(orca_profile)
+            return adapter
+        except Exception as exc:  # noqa: BLE001 - invalid backend profile must fail closed
+            return MissingAdapter(name, f"invalid Orca execution_profile: {type(exc).__name__}: {exc}")
+
+    adapter = load_adapter(name, cwd=resolved_cwd)
     if pol is not None:
-        profile = pol.execution_profile.get(name) or {}
+        direct_profile = {k: v for k, v in profile.items() if k != "execution_backend"}
         apply = getattr(adapter, "apply_profile", None)
-        if profile and apply is None:
+        if direct_profile and apply is None:
             return MissingAdapter(name, "project policy sets an execution_profile this adapter cannot enforce")
         if apply is not None:
-            apply(profile)
+            try:
+                apply(direct_profile)
+            except Exception as exc:  # noqa: BLE001 - invalid provider profile must fail closed
+                return MissingAdapter(name, f"invalid execution_profile: {type(exc).__name__}: {exc}")
     return adapter
