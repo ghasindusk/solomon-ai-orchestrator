@@ -23,8 +23,8 @@ projects:
     max_autonomy: 2
     # Only these execution intelligences may run for this project.
     allowed_adapters: [claude_code, codex]
-    # Add 'orca' to allowed_adapters when this project is executed from an
-    # Orca-managed worktree. The v0.6 pilot keeps placement fail-closed.
+    # Orca is an execution backend, not an adapter identity. Keep the
+    # selected intelligence (for example codex) in allowed_adapters.
     # Restrictions applied when the adapter is constructed for the project.
     execution_profile:
       claude_code:
@@ -37,6 +37,8 @@ projects:
         sandbox: read-only          # or workspace-write
       antigravity:
         mode: plan                  # sandbox is always on for agy
-      orca:
-        agent: codex                # Orca-supported agent name
-        worktree: current           # pilot supports current only
+      # Alternative Codex-through-Orca profile (replace the codex block above):
+      # codex:
+      #   execution_backend: orca
+      #   orca:
+      #     worktree: current       # pilot supports current only
