@@ -33,8 +33,19 @@ def completed(args, payload, returncode=0, stderr=""):
     )
 
 
+def coordinator_terminal_command(cmd):
+    if "terminal" in cmd and "create" in cmd:
+        return completed(cmd, {"ok": True, "terminal": {"handle": "coord-1"}})
+    if "terminal" in cmd and "close" in cmd:
+        return completed(cmd, {"ok": True})
+    return None
+
+
 def success_sequence(outcome="succeeded"):
     def _run(cmd, **kwargs):
+        terminal_result = coordinator_terminal_command(cmd)
+        if terminal_result is not None:
+            return terminal_result
         joined = " ".join(str(x) for x in cmd)
         if " status " in f" {joined} ":
             return completed(cmd, {"ok": True, "version": "test"})
@@ -154,8 +165,17 @@ def test_orca_success_requires_matching_worker_done_and_releases_before_ack():
     assert result.status == "RESULT_RECEIVED"
     assert result.summary == "implemented and tested"
     assert result.changed_files == ["src/example.py"]
+    assert "orca_run_id=run-1" in result.evidence
+    assert "orca_coordinator_handle=coord-1" in result.evidence
     assert "orca_task_id=orca-task-1" in result.evidence
     assert "orca_dispatch_id=dispatch-1" in result.evidence
+
+    worker_start = next(c for c in calls if "worker-start" in c)
+    wait_check = next(c for c in calls if "check" in c and "--wait" in c)
+    assert worker_start[worker_start.index("--run") + 1] == "run-1"
+    assert worker_start[worker_start.index("--from") + 1] == "coord-1"
+    assert wait_check[wait_check.index("--run") + 1] == "run-1"
+    assert wait_check[wait_check.index("--terminal") + 1] == "coord-1"
 
     release_i = next(i for i, c in enumerate(calls) if "worker-release" in c)
     ack_i = next(i for i, c in enumerate(calls) if "--ack" in c)
@@ -180,6 +200,9 @@ def test_orca_mismatched_worker_done_fails_closed_without_ack_or_release():
 
     def _run(cmd, **kwargs):
         calls.append(cmd)
+        terminal_result = coordinator_terminal_command(cmd)
+        if terminal_result is not None:
+            return terminal_result
         joined = " ".join(str(x) for x in cmd)
         if " status " in f" {joined} ":
             return completed(cmd, {"ok": True})
@@ -231,6 +254,9 @@ def test_orca_question_is_left_for_explicit_coordinator_action():
 
     def _run(cmd, **kwargs):
         calls.append(cmd)
+        terminal_result = coordinator_terminal_command(cmd)
+        if terminal_result is not None:
+            return terminal_result
         joined = " ".join(str(x) for x in cmd)
         if " status " in f" {joined} ":
             return completed(cmd, {"ok": True})
@@ -274,6 +300,9 @@ def test_orca_worker_start_failure_never_retries():
 
     def _run(cmd, **kwargs):
         nonlocal worker_start_calls
+        terminal_result = coordinator_terminal_command(cmd)
+        if terminal_result is not None:
+            return terminal_result
         joined = " ".join(str(x) for x in cmd)
         if " status " in f" {joined} ":
             return completed(cmd, {"ok": True})
@@ -301,6 +330,54 @@ def test_orca_worker_start_failure_never_retries():
     assert result.status == "FAILED"
     assert worker_start_calls == 1
     assert any("no automatic retry" in x for x in result.uncertainties)
+
+
+def test_orca_missing_run_id_fails_closed_before_worker_start():
+    adapter = OrcaAdapter()
+    calls = []
+
+    def _run(cmd, **kwargs):
+        calls.append(cmd)
+        terminal_result = coordinator_terminal_command(cmd)
+        if terminal_result is not None:
+            return terminal_result
+        joined = " ".join(str(x) for x in cmd)
+        if " status " in f" {joined} ":
+            return completed(cmd, {"ok": True})
+        if "run-create" in cmd:
+            return completed(cmd, {"ok": True, "result": {}})
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    with patch("solomon.adapters.orca_adapter.shutil.which", return_value="/usr/bin/orca"), patch(
+        "solomon.adapters.orca_adapter.subprocess.run", side_effect=_run
+    ):
+        result = adapter.execute(make_task(), "implement feature", timeout_s=60)
+
+    assert result.status == "FAILED"
+    assert any("missing Orca Run ID" in x for x in [result.summary])
+    assert not any("worker-start" in call for call in calls)
+
+
+def test_orca_release_failure_does_not_ack_delivery():
+    adapter = OrcaAdapter()
+    calls = []
+    base = success_sequence("succeeded")
+
+    def _run(cmd, **kwargs):
+        calls.append(cmd)
+        if "worker-release" in cmd:
+            return completed(cmd, {"ok": False, "error": {"code": "release_pending"}}, returncode=1)
+        return base(cmd, **kwargs)
+
+    with patch("solomon.adapters.orca_adapter.shutil.which", return_value="/usr/bin/orca"), patch(
+        "solomon.adapters.orca_adapter.subprocess.run", side_effect=_run
+    ):
+        result = adapter.execute(make_task(), "implement feature", timeout_s=60)
+
+    assert result.status == "FAILED"
+    assert any("cleanup_unverified" in item for item in result.uncertainties)
+    assert not any("--ack" in call for call in calls)
+    assert not any("terminal" in call and "close" in call for call in calls)
 
 
 def test_orca_profile_accepts_agent_but_rejects_unimplemented_placement():
