@@ -18,8 +18,10 @@ without a deprecation period until v1.0.0.
 
 ### Security
 - Orca worker output is accepted only from a matching worker_done taskId and
-  dispatchId. Unknown lifecycle state fails closed and is never promoted to
-  task completion.
+  dispatchId inside an explicitly bound coordinator terminal/Run. Unknown
+  lifecycle state fails closed and is never promoted to task completion.
+- A Delivery is not acknowledged until worker-release confirms cleanup;
+  uncertain release retains the coordinator identity for recovery.
 - Invalid adapter execution profiles now degrade to an unavailable adapter
   instead of crashing provider loading.
 
