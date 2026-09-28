@@ -9,8 +9,9 @@ without a deprecation period until v1.0.0.
 ## [Unreleased]
 
 ### Added
-- Optional Orca supervised execution-plane adapter. Octavryn remains the
-  control plane for routing, memory/RAG, governance, approval and final
+- Optional Orca supervised execution backend for selected Codex/Claude Code
+  tasks. Orca is not added as a routing identity; Octavryn remains the control
+  plane for routing, memory/RAG, governance, approval and final
   Definition-of-Done verification.
 - Orca lifecycle tests for authoritative task/dispatch IDs, worker-reported
   failure, questions/escalations, cleanup ordering and no blind retry.
