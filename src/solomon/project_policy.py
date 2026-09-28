@@ -25,9 +25,16 @@ exactly the pre-D67 behaviour):
   execution_profile       per-adapter restrictions applied when the
                           adapter is constructed for this project:
                             claude_code: allowed_tools, disallowed_tools,
-                                         permission_mode
-                            codex:       sandbox (read-only|workspace-write)
+                                         permission_mode, execution_backend,
+                                         orca
+                            codex:       sandbox, execution_backend, orca
                             antigravity: sandbox (bool), mode (plan|accept-edits)
+
+                          execution_backend defaults to direct. The v0.6 Orca
+                          pilot permits execution_backend: orca for codex and
+                          claude_code only. Provider-specific direct settings
+                          cannot be combined with the Orca backend because
+                          Octavryn cannot prove Orca enforces them.
 
 Refusals are DENY, not approval: the point of the policy is that these
 actions are unavailable for the project, and approving one would need a
@@ -48,10 +55,13 @@ import yaml
 
 DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[2] / "04_Config_Schemas" / "project_policies.yaml"
 KNOWN_PROFILE_KEYS = {
-    "claude_code": {"allowed_tools", "disallowed_tools", "permission_mode"},
-    "codex": {"sandbox"},
+    "claude_code": {"allowed_tools", "disallowed_tools", "permission_mode", "execution_backend", "orca"},
+    "codex": {"sandbox", "execution_backend", "orca"},
     "antigravity": {"sandbox", "mode"},
 }
+_ORCA_BACKEND_AGENTS = {"codex": "codex", "claude_code": "claude"}
+_ORCA_PROFILE_KEYS = {"agent", "worktree"}
+_EXECUTION_BACKENDS = {"direct", "orca"}
 _CODEX_SANDBOXES = {"read-only", "workspace-write"}
 _AGY_MODES = {"plan", "accept-edits"}
 _CLAUDE_MODES = {"default", "plan", "acceptEdits"}
@@ -110,6 +120,50 @@ class ProjectPolicy:
             extra = set(profile or {}) - KNOWN_PROFILE_KEYS[adapter]
             if extra:
                 raise PolicyError(f"{self.project_id}: execution_profile.{adapter} has unknown keys {sorted(extra)}")
+        for adapter, profile in self.execution_profile.items():
+            if not isinstance(profile, dict):
+                raise PolicyError(f"{self.project_id}: execution_profile.{adapter} must be a mapping")
+            backend = profile.get("execution_backend", "direct")
+            if backend not in _EXECUTION_BACKENDS:
+                raise PolicyError(
+                    f"{self.project_id}: execution_profile.{adapter}.execution_backend "
+                    f"must be one of {sorted(_EXECUTION_BACKENDS)}"
+                )
+            if backend == "orca":
+                if adapter not in _ORCA_BACKEND_AGENTS:
+                    raise PolicyError(f"{self.project_id}: Orca backend is not supported for {adapter}")
+                direct_only = set(profile) - {"execution_backend", "orca"}
+                if direct_only:
+                    raise PolicyError(
+                        f"{self.project_id}: execution_profile.{adapter} cannot combine Orca "
+                        f"with direct-adapter settings {sorted(direct_only)}"
+                    )
+                orca = profile.get("orca") or {}
+                if not isinstance(orca, dict):
+                    raise PolicyError(
+                        f"{self.project_id}: execution_profile.{adapter}.orca must be a mapping"
+                    )
+                extra_orca = set(orca) - _ORCA_PROFILE_KEYS
+                if extra_orca:
+                    raise PolicyError(
+                        f"{self.project_id}: execution_profile.{adapter}.orca has unknown keys "
+                        f"{sorted(extra_orca)}"
+                    )
+                if orca.get("worktree", "current") != "current":
+                    raise PolicyError(
+                        f"{self.project_id}: v0.6 Orca pilot supports worktree='current' only"
+                    )
+                expected_agent = _ORCA_BACKEND_AGENTS[adapter]
+                if orca.get("agent", expected_agent) != expected_agent:
+                    raise PolicyError(
+                        f"{self.project_id}: Orca agent must remain {expected_agent!r} for "
+                        f"logical adapter {adapter!r}"
+                    )
+            elif "orca" in profile:
+                raise PolicyError(
+                    f"{self.project_id}: execution_profile.{adapter}.orca requires execution_backend='orca'"
+                )
+
         codex = self.execution_profile.get("codex") or {}
         if "sandbox" in codex and codex["sandbox"] not in _CODEX_SANDBOXES:
             raise PolicyError(f"{self.project_id}: codex sandbox must be one of {sorted(_CODEX_SANDBOXES)}")
