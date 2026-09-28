@@ -122,8 +122,9 @@ tasks. Orca is **not** added as a routing identity: Octavryn can still select
 Codex or Claude Code, then execute that selected intelligence through Orca.
 
 The first integration slice is deliberately conservative: it uses the current
-Orca-managed worktree and only returns RESULT_RECEIVED after a matching
-worker_done task/dispatch receipt. Questions,
+Orca-managed worktree, binds each delegated task to an explicit short-lived
+Octavryn coordinator terminal + Orca Run, and only returns RESULT_RECEIVED
+after a matching worker_done task/dispatch receipt. Questions,
 escalations, unknown lifecycle state, and mismatched IDs fail closed rather
 than being inferred as success.
 
